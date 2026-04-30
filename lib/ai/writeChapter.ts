@@ -70,7 +70,15 @@ export async function writeChapter(input: WriteChapterInput): Promise<WriteChapt
   // 压缩上下文，控制输入长度
   const compressedPrompt = prompt.slice(0, 12000)
 
-  const callResult = await callKimi({
+  const targetWordCount = 3000
+  const minWordCount = Math.round(targetWordCount * 0.9)
+
+  let fullContent = ''
+  let totalInputTokens = 0
+  let totalOutputTokens = 0
+
+  // 第一次生成
+  const firstResult = await callKimi({
     messages: [
       { role: 'system', content: '你是一个专业的小说写手，擅长根据大纲和上下文写出节奏紧凑、人物鲜活、伏笔自然的小说章节。你写的文字要有人味，避免AI腔。你必须达到目标字数，不要输出章节标题。' },
       { role: 'user', content: compressedPrompt },
@@ -79,16 +87,59 @@ export async function writeChapter(input: WriteChapterInput): Promise<WriteChapt
     maxTokens: 8000,
   })
 
+  fullContent = firstResult.content
+  totalInputTokens += firstResult.inputTokens
+  totalOutputTokens += firstResult.outputTokens
+
+  // 字数检查与续写
+  const chineseWordCount = fullContent.replace(/\s/g, '').length
+  let attempts = 0
+  const maxAttempts = 2
+
+  while (chineseWordCount < minWordCount && attempts < maxAttempts) {
+    attempts++
+    const remainingWords = targetWordCount - chineseWordCount
+
+    const continuePrompt = `你正在写的这一章字数不足。当前已写 ${chineseWordCount} 字，目标 ${targetWordCount} 字，还需要续写约 ${remainingWords} 字。
+
+**绝对不要重复已经写过的内容。**请从当前内容的结尾处继续往下写，推进剧情、增加细节或扩展场景。
+
+当前已写内容的最后一段：
+"""
+${fullContent.slice(-500)}
+"""
+
+请继续写后续内容，直接输出续写部分（不要重复前文）。需要续写约 ${remainingWords} 字。`
+
+    const continueResult = await callKimi({
+      messages: [
+        { role: 'system', content: '你是一个专业的小说写手。请继续写下面的章节，不要重复前文，直接输出续写部分。' },
+        { role: 'user', content: continuePrompt },
+      ],
+      temperature: 0.75,
+      maxTokens: 8000,
+    })
+
+    fullContent += '\n' + continueResult.content
+    totalInputTokens += continueResult.inputTokens
+    totalOutputTokens += continueResult.outputTokens
+
+    const newCount = fullContent.replace(/\s/g, '').length
+    console.log(`  续写 #${attempts}: ${chineseWordCount} → ${newCount} 字`)
+
+    if (newCount <= chineseWordCount) break // 没有新增内容，停止
+  }
+
   // 生成临时摘要（确保后续章节有前文参考）
-  const tempSummary = generateTempSummary(callResult.content)
+  const tempSummary = generateTempSummary(fullContent)
 
   // 保存草稿
   const updatedChapter = await prisma.chapter.update({
     where: { id: chapterId },
     data: {
-      draftContent: callResult.content,
+      draftContent: fullContent,
       status: 'ai_draft',
-      wordCount: callResult.content.length,
+      wordCount: fullContent.replace(/\s/g, '').length,
       summary: tempSummary,
     },
   })
@@ -98,8 +149,8 @@ export async function writeChapter(input: WriteChapterInput): Promise<WriteChapt
     data: {
       chapterId,
       versionType: 'ai_draft',
-      content: callResult.content,
-      note: `AI 生成，模型: ${callResult.model}`,
+      content: fullContent,
+      note: `AI 生成，模型: ${firstResult.model}${attempts > 0 ? ` (续写${attempts}次)` : ''}`,
     },
   })
 
@@ -108,11 +159,11 @@ export async function writeChapter(input: WriteChapterInput): Promise<WriteChapt
       bookId,
       chapterId,
       taskType: 'write',
-      inputTokens: callResult.inputTokens,
-      outputTokens: callResult.outputTokens,
-      model: callResult.model,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      model: firstResult.model,
       result: 'success',
-      costEstimate: estimateCost(callResult.inputTokens, callResult.outputTokens),
+      costEstimate: estimateCost(totalInputTokens, totalOutputTokens),
     },
   })
 
