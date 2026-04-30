@@ -180,6 +180,17 @@ export const GENRE_OPTIONS: GenreOption[] = [
     ],
   },
   {
+    value: '钓鱼文',
+    label: '钓鱼',
+    description: '垂钓、渔具、大鱼、水域探险',
+    defaultStyle: '轻松解压、期待感强、收获反馈明确',
+    exampleIdeas: [
+      '辞职回乡钓鱼，发现钓到的鱼能兑换超能力',
+      '一个被开除的饵料研究员，发现神秘配方能钓起传说中的鱼',
+      '继承去世爷爷的钓棚，发现水下有通往异世界的入口',
+    ],
+  },
+  {
     value: '克苏鲁',
     label: '克苏鲁',
     description: '不可名状、疯狂、调查、绝望',
