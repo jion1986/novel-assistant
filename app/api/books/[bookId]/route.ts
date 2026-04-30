@@ -39,12 +39,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   const book = await prisma.book.findFirst({
     where: { id: bookId, userId },
     include: {
-      storyBible: true,
-      characters: { orderBy: { orderIndex: 'asc' } },
-      chapters: { orderBy: { chapterNumber: 'asc' } },
-      memoryItems: { where: { isActive: true } },
-      foreshadowings: true,
-      generationRuns: true,
+      storyBible: { select: { id: true, worldSetting: true, storyType: true, tone: true, coreConflict: true, powerSystem: true, rules: true, forbiddenChanges: true, styleGuide: true, sellingPoints: true } },
+      characters: { orderBy: { orderIndex: 'asc' }, select: { id: true, name: true, role: true, age: true, identity: true, personality: true, goal: true, speakingStyle: true, currentStatus: true, lockedFacts: true, orderIndex: true } },
+      chapters: { orderBy: { chapterNumber: 'asc' }, select: { id: true, chapterNumber: true, title: true, chapterGoal: true, outline: true, status: true, wordCount: true } },
+      memoryItems: { where: { isActive: true }, select: { id: true, type: true, content: true, importance: true }, take: 100 },
+      foreshadowings: { select: { id: true, name: true, description: true, status: true, setupChapter: true, resolveChapter: true } },
     },
   })
 
