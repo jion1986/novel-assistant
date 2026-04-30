@@ -6,7 +6,9 @@
  */
 
 import { config } from 'dotenv'
-config({ override: true })
+// 加载顺序：.env (基础配置) → .env.local (本地覆盖，允许覆盖已有变量)
+config({ path: '.env' })
+config({ path: '.env.local', override: true })
 
 export interface ModelCallOptions {
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>

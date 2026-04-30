@@ -5,14 +5,22 @@
  */
 
 import { config } from 'dotenv'
-config({ override: true })
+config({ path: '.env' })
+config({ path: '.env.local', override: true })
 
 import { prisma } from '../lib/db'
 import { generateSetting } from '../lib/ai/generateSetting'
 
 async function main() {
+  // 0. 确保测试用户存在
+  const user = await prisma.user.upsert({
+    where: { username: 'test' },
+    update: {},
+    create: { username: 'test', password: 'test-hash-not-used' },
+  })
+
   // 1. 创建一个测试小说项目
-  const book = await prisma.book.create({ data: { userId: 'system-user-id',
+  const book = await prisma.book.create({ data: { userId: user.id,
       title: '测试小说：情绪读取者',
       genre: '都市异能',
       coreIdea: '一个普通上班族意外获得读取他人情绪的能力，卷入都市阴谋',
