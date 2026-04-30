@@ -1,0 +1,213 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// 小说项目
+model Book {
+  id          String   @id @default(uuid())
+  userId      String
+  title       String
+  genre       String   // 题材：都市异能、玄幻升级、悬疑推理等
+  coreIdea    String   // 核心创意（一句话）
+  targetWords Int?     // 目标字数
+  style       String?  // 目标风格偏好
+  status      String   @default("active") // active | archived | completed
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // 关联
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storyBible     StoryBible?
+  characters     Character[]
+  chapters       Chapter[]
+  memoryItems    MemoryItem[]
+  foreshadowings Foreshadowing[]
+  generationRuns GenerationRun[]
+
+  @@index([userId])
+  @@map("books")
+}
+
+/// 小说圣经 - 全书最核心、最不能乱改的设定
+model StoryBible {
+  id              String  @id @default(uuid())
+  bookId          String  @unique
+  worldSetting    String  // 世界观描述
+  tone            String  // 整体基调
+  coreConflict    String  // 核心冲突
+  powerSystem     String? // 力量体系（如有）
+  rules           String? // 世界规则
+  forbiddenChanges String? // 禁止改动项
+  styleGuide      String? // 文风指南
+  sellingPoints   String? // 卖点
+  storyType       String? // 故事类型
+
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@map("story_bibles")
+}
+
+/// 角色
+model Character {
+  id            String  @id @default(uuid())
+  bookId        String
+  name          String
+  role          String  // protagonist | deuteragonist | supporting | antagonist
+  age           String? // 允许描述性年龄如"二十多岁"
+  identity      String? // 身份/职业
+  personality   String? // 性格特点
+  goal          String? // 角色目标
+  relationships String? // 人物关系（JSON 或文本）
+  speakingStyle String? // 说话习惯/风格
+  currentStatus String? // 当前状态（随剧情动态更新）
+  lockedFacts   String? // 不可改动的设定（JSON 数组）
+  orderIndex    Int     @default(0) // 显示顺序
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@index([bookId])
+  @@map("characters")
+}
+
+/// 章节
+model Chapter {
+  id           String   @id @default(uuid())
+  bookId       String
+  chapterNumber Int     // 第几章
+  title        String
+  chapterGoal  String?  // 本章目标
+  outline      String?  // 本章大纲要点
+  draftContent String?  // AI 生成的草稿
+  finalContent String?  // 用户定稿
+  summary      String?  // 本章摘要（用于记忆）
+  status       String   @default("unwritten") // unwritten | ai_draft | edited | finalized
+  wordCount    Int?     // 实际字数
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  book            Book              @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  versions        ChapterVersion[]
+  generationRuns  GenerationRun[]
+
+  @@unique([bookId, chapterNumber])
+  @@index([bookId])
+  @@map("chapters")
+}
+
+/// 章节版本 - 支持版本回退
+model ChapterVersion {
+  id          String   @id @default(uuid())
+  chapterId   String
+  versionType String   // ai_draft | user_edit | final
+  content     String
+  note        String?  // 版本备注
+  createdAt   DateTime @default(now())
+
+  chapter Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  @@index([chapterId])
+  @@map("chapter_versions")
+}
+
+/// 记忆条目 - 动态记忆
+model MemoryItem {
+  id            String   @id @default(uuid())
+  bookId        String
+  type          String   // character | event | location | item | rule | relationship
+  content       String   // 记忆内容
+  relatedChapter String? // 关联章节
+  importance    String   @default("normal") // critical | high | normal | low
+  isLocked      Boolean  @default(false)    // 是否锁定（不可自动修改）
+  isActive      Boolean  @default(true)     // 是否仍在活跃记忆中
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@index([bookId])
+  @@map("memory_items")
+}
+
+/// 伏笔
+model Foreshadowing {
+  id            String   @id @default(uuid())
+  bookId        String
+  name          String
+  description   String   // 伏笔描述
+  setupChapter  String?  // 在哪章埋下
+  status        String   @default("planted") // planted | developed | resolved
+  resolvePlan   String?  // 回收计划/预计在哪章回收
+  resolveChapter String? // 实际在哪章回收
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@index([bookId])
+  @@map("foreshadowings")
+}
+
+/// 生成记录 - 成本追踪与问题排查
+model GenerationRun {
+  id           String   @id @default(uuid())
+  bookId       String
+  chapterId    String?
+  taskType     String   // setting | characters | outline | chapter_plan | write | rewrite | extract_memory | check_consistency
+  promptVersion String? // 使用的 Prompt 版本
+  inputTokens  Int?
+  outputTokens Int?
+  model        String
+  result       String?  // 结果摘要或状态：success | error
+  errorMessage String?  // 错误信息（如有）
+  costEstimate Float?   // 预估成本（元）
+
+  createdAt DateTime @default(now())
+
+  book    Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  chapter Chapter? @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+
+  @@index([bookId])
+  @@index([chapterId])
+  @@map("generation_runs")
+}
+
+/// 用户
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  password  String   // bcrypt 哈希
+  createdAt DateTime @default(now())
+
+  books Book[]
+
+  @@map("users")
+}
+
+/// Prompt 版本管理
+model PromptVersion {
+  id        String   @id @default(uuid())
+  taskType  String   // 对应任务类型
+  version   String   // 版本号，如 v1.0.0
+  content   String   // Prompt 完整内容
+  isActive  Boolean  @default(false) // 当前是否激活
+  note      String?  // 版本备注/变更说明
+
+  createdAt DateTime @default(now())
+
+  @@unique([taskType, version])
+  @@map("prompt_versions")
+}
