@@ -20,7 +20,7 @@ async function runTest() {
   const ch1 = await prisma.chapter.create({
     data: { bookId: book.id, chapterNumber: 1, title: '第一章', status: 'unwritten' },
   })
-  const ch2 = await prisma.chapter.create({
+  await prisma.chapter.create({
     data: { bookId: book.id, chapterNumber: 2, title: '第二章', status: 'unwritten' },
   })
 
@@ -151,6 +151,7 @@ async function runTest() {
       status: 'unwritten',
     },
   })
+  console.log(`  新章节: ${inserted.id}`)
 
   const afterChapters = await prisma.chapter.findMany({
     where: { bookId: book.id },

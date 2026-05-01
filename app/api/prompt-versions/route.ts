@@ -16,7 +16,9 @@ const createSchema = z.object({
  */
 export async function GET(request: NextRequest) {
   const session = await readSession(request)
-  const userId = session.userId!
+  if (!session.isLoggedIn || !session.userId) {
+    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
+  }
   const versions = await prisma.promptVersion.findMany({
     orderBy: [{ taskType: 'asc' }, { createdAt: 'desc' }],
   })
@@ -29,7 +31,9 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   const session = await readSession(request)
-  const userId = session.userId!
+  if (!session.isLoggedIn || !session.userId) {
+    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
+  }
   const body = await request.json()
   const parsed = createSchema.safeParse(body)
   if (!parsed.success) {

@@ -11,7 +11,6 @@ import { prisma } from '../lib/db'
 import { generateSetting } from '../lib/ai/generateSetting'
 import { generateCharacters } from '../lib/ai/generateCharacters'
 import { generateOutline } from '../lib/ai/generateOutline'
-import { generateChapterPlan } from '../lib/ai/generateChapterPlan'
 import { writeChapter } from '../lib/ai/writeChapter'
 import { extractMemory } from '../lib/ai/extractMemory'
 

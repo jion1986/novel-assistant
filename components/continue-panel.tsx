@@ -56,7 +56,7 @@ export function ContinuePanel({ bookId, chapterId, onAppend }: ContinuePanelProp
           disabled={loading}
           className="w-full rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
-          {loading ? '续写中...' : '从光标处续写'}
+          {loading ? '续写中...' : '从末尾续写'}
         </button>
         <p className="text-xs text-muted-foreground">基于当前内容末尾自动续写</p>
       </div>

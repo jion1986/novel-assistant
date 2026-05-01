@@ -29,6 +29,16 @@ interface Chapter {
   wordCount: number | null
 }
 
+function toChapterList(data: Chapter[]): Chapter[] {
+  return data.map((chapter) => ({
+    id: chapter.id,
+    chapterNumber: chapter.chapterNumber,
+    title: chapter.title,
+    status: chapter.status,
+    wordCount: chapter.wordCount,
+  }))
+}
+
 interface ChapterListProps {
   bookId: string
   initialChapters: Chapter[]
@@ -201,7 +211,6 @@ export function ChapterList({ bookId, initialChapters }: ChapterListProps) {
         const res = await fetch(`/api/books/${bookId}/chapters/${chapterId}/save-final`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: '' }),
         })
         const data = await res.json()
         if (data.success) {
@@ -228,13 +237,7 @@ export function ChapterList({ bookId, initialChapters }: ChapterListProps) {
     const listRes = await fetch(`/api/books/${bookId}/chapters`)
     const listData = await listRes.json()
     if (listData.success) {
-      setChapters(listData.data.map((c: any) => ({
-        id: c.id,
-        chapterNumber: c.chapterNumber,
-        title: c.title,
-        status: c.status,
-        wordCount: c.wordCount,
-      })))
+      setChapters(toChapterList(listData.data))
     }
   }
 
@@ -289,13 +292,7 @@ export function ChapterList({ bookId, initialChapters }: ChapterListProps) {
         const listRes = await fetch(`/api/books/${bookId}/chapters`)
         const listData = await listRes.json()
         if (listData.success) {
-          setChapters(listData.data.map((c: any) => ({
-            id: c.id,
-            chapterNumber: c.chapterNumber,
-            title: c.title,
-            status: c.status,
-            wordCount: c.wordCount,
-          })))
+          setChapters(toChapterList(listData.data))
         }
       } else {
         toast(`创建失败: ${data.error}`, 'error')
@@ -333,13 +330,7 @@ export function ChapterList({ bookId, initialChapters }: ChapterListProps) {
         const rollbackRes = await fetch(`/api/books/${bookId}/chapters`)
         const rollbackData = await rollbackRes.json()
         if (rollbackData.success) {
-          setChapters(rollbackData.data.map((c: any) => ({
-            id: c.id,
-            chapterNumber: c.chapterNumber,
-            title: c.title,
-            status: c.status,
-            wordCount: c.wordCount,
-          })))
+          setChapters(toChapterList(rollbackData.data))
         }
       }
     } catch {

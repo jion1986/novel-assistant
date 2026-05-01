@@ -199,7 +199,6 @@ export default function ChapterEditPage() {
 
   useEffect(() => {
     if (content !== originalContent) {
-      setSaveStatus('idle')
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
       autoSaveTimer.current = setTimeout(() => {
         performAutoSave()
@@ -588,8 +587,12 @@ export default function ChapterEditPage() {
               {showEditor && (
                 <textarea
                   ref={textareaRef}
+                  data-editor="main"
                   value={content}
-                  onChange={(e) => setContent(e.target.value)}
+                  onChange={(e) => {
+                    setContent(e.target.value)
+                    if (e.target.value !== originalContent) setSaveStatus('idle')
+                  }}
                   onKeyDown={handleKeyDown}
                   onScroll={handleScroll}
                   className="w-full min-h-[600px] rounded-md border bg-background px-4 py-3 text-sm leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-ring"
@@ -639,7 +642,23 @@ export default function ChapterEditPage() {
 
           <div className="rounded-lg border bg-card p-4">
             <h3 className="font-medium mb-2">操作</h3>
-            <ChapterActions bookId={bookId} chapterId={chapterId} status={chapter.status} />
+            <ChapterActions
+              bookId={bookId}
+              chapterId={chapterId}
+              status={chapter.status}
+              onContentReplace={(newContent) => {
+                setContent(newContent)
+                setOriginalContent(newContent)
+                setSaveStatus('saved')
+                setChapter((prev) => prev ? {
+                  ...prev,
+                  draftContent: newContent,
+                  status: 'ai_draft',
+                  wordCount: newContent.replace(/\s/g, '').length,
+                } : prev)
+                setTimeout(() => setSaveStatus((s) => (s === 'saved' ? 'idle' : s)), 3000)
+              }}
+            />
           </div>
 
           <ChapterVersionHistory
@@ -658,6 +677,7 @@ export default function ChapterEditPage() {
             content={content}
             onReplace={(newContent) => {
               setContent(newContent)
+              setSaveStatus('idle')
             }}
           />
 

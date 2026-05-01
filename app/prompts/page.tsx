@@ -45,7 +45,10 @@ export default function PromptsPage() {
   }, [])
 
   useEffect(() => {
-    loadData()
+    const timer = window.setTimeout(() => {
+      loadData()
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [loadData])
 
   async function createVersion() {

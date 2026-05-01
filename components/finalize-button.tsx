@@ -23,7 +23,7 @@ export function FinalizeButton({ bookId, chapterId, content }: FinalizeButtonPro
       })
       const data = await res.json()
       if (data.success) {
-        toast('定稿已保存！', 'success')
+        toast('定稿已保存，记忆提取已触发', 'success')
         window.location.reload()
       } else {
         toast(`保存失败: ${data.error}`, 'error')

@@ -15,7 +15,7 @@ async function runTest() {
     },
   })
 
-  const ch = await prisma.chapter.create({
+  await prisma.chapter.create({
     data: {
       bookId: book.id,
       chapterNumber: 1,

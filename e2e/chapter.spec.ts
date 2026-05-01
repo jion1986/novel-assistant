@@ -1,14 +1,14 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 
 test.describe('章节编辑流', () => {
-  async function createBookAndChapter(page: any) {
+  async function createBookAndChapter(page: Page) {
     // 创建小说
     await page.goto('/books/new')
     await page.getByPlaceholder('输入小说标题').fill('章节测试小说')
-    await page.locator('select[name="genre"]').selectOption('玄幻升级')
+    await page.getByRole('button', { name: /玄幻升级/ }).click()
     await page.getByPlaceholder('例如：一个普通上班族意外获得读取他人情绪的能力').fill('一个少年觉醒系统的故事')
     await page.getByRole('button', { name: '创建项目' }).click()
-    await page.waitForURL(/\/books\/[a-z0-9-]+/)
+    await page.waitForURL(/\/books\/[0-9a-f-]{36}$/)
 
     const bookUrl = page.url()
     const bookId = bookUrl.split('/').pop()
@@ -35,9 +35,8 @@ test.describe('章节编辑流', () => {
     await textarea.fill('这是测试章节内容。')
     await expect(textarea).toHaveValue('这是测试章节内容。')
 
-    // 等待自动保存
-    await page.waitForTimeout(3500)
-    await expect(page.getByText(/已保存|saved/)).toBeVisible()
+    await page.getByRole('button', { name: '保存草稿' }).click()
+    await expect(page.getByRole('button', { name: '已保存' })).toBeVisible()
   })
 
   test('编辑章节标题', async ({ page }) => {
@@ -72,14 +71,18 @@ test.describe('章节编辑流', () => {
     // 输入内容并手动保存草稿
     const textarea = page.locator('textarea').first()
     await textarea.fill('定稿测试内容。')
+    await expect(textarea).toHaveValue('定稿测试内容。')
 
-    // 按 Ctrl+S 保存草稿
-    await textarea.press('Control+s')
-    await page.waitForTimeout(1000)
+    await page.getByRole('button', { name: '保存草稿' }).click()
+    await expect(page.getByRole('button', { name: '已保存' })).toBeVisible()
 
     // 点击定稿按钮（处理 confirm 对话框）
     page.on('dialog', (dialog) => dialog.accept())
+    const saveFinalResponse = page.waitForResponse((res) =>
+      res.url().includes('/save-final') && res.request().method() === 'POST'
+    )
     await page.getByRole('button', { name: '保存定稿' }).click()
+    await expect((await saveFinalResponse).ok()).toBe(true)
 
     // 定稿成功后会刷新页面
     await page.waitForLoadState('networkidle')

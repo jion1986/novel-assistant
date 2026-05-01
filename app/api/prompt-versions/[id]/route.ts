@@ -19,7 +19,9 @@ interface RouteParams {
  */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   const session = await readSession(request)
-  const userId = session.userId!
+  if (!session.isLoggedIn || !session.userId) {
+    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
+  }
   const { id } = await params
   const body = await request.json()
 
@@ -56,7 +58,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
  */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   const session = await readSession(request)
-  const userId = session.userId!
+  if (!session.isLoggedIn || !session.userId) {
+    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
+  }
   const { id } = await params
   await prisma.promptVersion.delete({ where: { id } })
   return NextResponse.json({ success: true })

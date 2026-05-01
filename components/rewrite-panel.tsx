@@ -16,15 +16,17 @@ export function RewritePanel({ bookId, chapterId, content, onReplace }: RewriteP
   const [selectedText, setSelectedText] = useState('')
   const [result, setResult] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const selectionRangeRef = useRef<{ start: number; end: number } | null>(null)
 
   function captureSelection() {
-    const textarea = document.querySelector('textarea') as HTMLTextAreaElement | null
+    const textarea = document.querySelector('textarea[data-editor="main"]') as HTMLTextAreaElement | null
     if (!textarea) return
     textareaRef.current = textarea
     const start = textarea.selectionStart
     const end = textarea.selectionEnd
     const text = textarea.value.slice(start, end)
     setSelectedText(text)
+    selectionRangeRef.current = text ? { start, end } : null
     setResult('')
   }
 
@@ -32,16 +34,17 @@ export function RewritePanel({ bookId, chapterId, content, onReplace }: RewriteP
     if (!selectedText.trim() || !instruction.trim()) return
     setLoading(true)
     try {
-      const res = await fetch(`/api/books/${bookId}/chapters/${chapterId}/rewrite`, {
+      const res = await fetch(`/api/books/${bookId}/chapters/${chapterId}/rewrite-selection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          instruction: `将以下段落按照要求改写：${instruction}\n\n原文：${selectedText}`,
+          selectedText,
+          instruction,
         }),
       })
       const data = await res.json()
       if (data.success) {
-        setResult(data.data.content || data.data.rewrittenContent || '')
+        setResult(data.data.rewrittenText || '')
       } else {
         toast(`改写失败: ${data.error}`, 'error')
       }
@@ -53,13 +56,16 @@ export function RewritePanel({ bookId, chapterId, content, onReplace }: RewriteP
   }
 
   function applyRewrite() {
-    if (!result || !textareaRef.current) return
-    const textarea = textareaRef.current
-    const start = textarea.selectionStart
-    const end = textarea.selectionEnd
+    if (!result || !textareaRef.current || !selectionRangeRef.current) return
+    const { start, end } = selectionRangeRef.current
     const newContent = content.slice(0, start) + result + content.slice(end)
     onReplace(newContent)
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+      textareaRef.current?.setSelectionRange(start, start + result.length)
+    })
     setSelectedText('')
+    selectionRangeRef.current = null
     setResult('')
     setInstruction('')
   }

@@ -21,7 +21,7 @@ export default function ExportPage() {
       a.download = `小说导出.${format === 'markdown' ? 'md' : 'txt'}`
       a.click()
       window.URL.revokeObjectURL(url)
-    } catch (e) {
+    } catch {
       toast('导出失败', 'error')
     } finally {
       setExporting(false)

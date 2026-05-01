@@ -18,11 +18,18 @@ export interface RewriteChapterResult {
  * 改写章节
  */
 export async function rewriteChapter(input: RewriteChapterInput): Promise<RewriteChapterResult> {
-  const { bookId, chapterId, instruction, styleReference } = input
+  const { bookId, chapterId, instruction } = input
 
   const chapter = await prisma.chapter.findUnique({
     where: { id: chapterId },
-    include: { book: { include: { storyBible: true } } },
+    include: {
+      book: {
+        include: {
+          storyBible: true,
+          characters: { orderBy: { orderIndex: 'asc' } },
+        },
+      },
+    },
   })
   if (!chapter) throw new Error(`Chapter not found: ${chapterId}`)
 
@@ -33,7 +40,10 @@ export async function rewriteChapter(input: RewriteChapterInput): Promise<Rewrit
   const prompt = fillTemplate(template, {
     originalContent: contentToRewrite,
     rewriteInstruction: instruction,
-    styleReference: styleReference || '',
+    storyBible: JSON.stringify(chapter.book.storyBible),
+    characters: chapter.book.characters
+      .map((c) => `${c.name}(${c.role}): ${c.currentStatus || c.personality || ''} [锁定设定: ${c.lockedFacts || '无'}]`)
+      .join('\n'),
   })
 
   const callResult = await callKimi({

@@ -7,26 +7,6 @@ interface PageProps {
   params: Promise<{ bookId: string }>
 }
 
-function statusLabel(status: string): string {
-  const map: Record<string, string> = {
-    unwritten: '未写',
-    ai_draft: 'AI草稿',
-    edited: '已编辑',
-    finalized: '已定稿',
-  }
-  return map[status] || status
-}
-
-function statusColor(status: string): string {
-  const map: Record<string, string> = {
-    unwritten: 'bg-muted text-muted-foreground',
-    ai_draft: 'bg-blue-100 text-blue-700',
-    edited: 'bg-yellow-100 text-yellow-700',
-    finalized: 'bg-green-100 text-green-700',
-  }
-  return map[status] || 'bg-muted'
-}
-
 function statusBarColor(status: string): string {
   const map: Record<string, string> = {
     unwritten: 'bg-muted-foreground/30',

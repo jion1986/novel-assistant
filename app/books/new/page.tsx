@@ -8,7 +8,6 @@ import {
   GENRE_OPTIONS,
   STYLE_OPTIONS,
   WORD_COUNT_OPTIONS,
-  CHAPTER_WORD_OPTIONS,
 } from '@/lib/book-config'
 
 export default function NewBookPage() {

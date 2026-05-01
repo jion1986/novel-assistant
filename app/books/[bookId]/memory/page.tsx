@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { toast } from '@/components/toast'
@@ -22,6 +22,7 @@ interface Foreshadowing {
   status: string
   setupChapter: string | null
   resolveChapter: string | null
+  resolvePlan: string | null
 }
 
 interface Character {
@@ -87,6 +88,10 @@ export default function MemoryPage() {
   const [foreshadowings, setForeshadowings] = useState<Foreshadowing[]>([])
   const [characters, setCharacters] = useState<Character[]>([])
   const [loading, setLoading] = useState(true)
+  const [memoryQuery, setMemoryQuery] = useState('')
+  const [typeFilter, setTypeFilter] = useState('all')
+  const [importanceFilter, setImportanceFilter] = useState('all')
+  const [activeFilter, setActiveFilter] = useState('active')
 
   // 记忆编辑状态
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -105,6 +110,22 @@ export default function MemoryPage() {
   const [fwForm, setFwForm] = useState({ name: '', description: '', status: 'planted', setupChapter: '', resolvePlan: '' })
   const [addingFw, setAddingFw] = useState(false)
 
+  const activeMemoryCount = memoryItems.filter((item) => item.isActive).length
+  const criticalMemoryCount = memoryItems.filter((item) => item.importance === 'critical').length
+  const openForeshadowingCount = foreshadowings.filter((fw) => fw.status !== 'resolved').length
+
+  const filteredMemoryItems = useMemo(() => {
+    const query = memoryQuery.trim().toLowerCase()
+    return memoryItems.filter((item) => {
+      if (typeFilter !== 'all' && item.type !== typeFilter) return false
+      if (importanceFilter !== 'all' && item.importance !== importanceFilter) return false
+      if (activeFilter === 'active' && !item.isActive) return false
+      if (activeFilter === 'archived' && item.isActive) return false
+      if (!query) return true
+      return item.content.toLowerCase().includes(query) || typeLabel(item.type).toLowerCase().includes(query)
+    })
+  }, [activeFilter, importanceFilter, memoryItems, memoryQuery, typeFilter])
+
   const loadData = useCallback(async () => {
     try {
       const res = await fetch(`/api/books/${bookId}/memory`)
@@ -122,7 +143,10 @@ export default function MemoryPage() {
   }, [bookId])
 
   useEffect(() => {
-    loadData()
+    const timer = window.setTimeout(() => {
+      loadData()
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [loadData])
 
   // 记忆 CRUD
@@ -257,7 +281,26 @@ export default function MemoryPage() {
         </Link>
       </div>
 
-      <h1 className="text-2xl font-bold mb-6">记忆库</h1>
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">记忆库</h1>
+          <p className="mt-1 text-sm text-muted-foreground">审阅角色状态、活跃记忆和伏笔进展。</p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+          <div className="rounded-md border bg-card px-3 py-2">
+            <div className="text-lg font-semibold">{activeMemoryCount}</div>
+            <div className="text-muted-foreground">活跃记忆</div>
+          </div>
+          <div className="rounded-md border bg-card px-3 py-2">
+            <div className="text-lg font-semibold">{criticalMemoryCount}</div>
+            <div className="text-muted-foreground">关键记忆</div>
+          </div>
+          <div className="rounded-md border bg-card px-3 py-2">
+            <div className="text-lg font-semibold">{openForeshadowingCount}</div>
+            <div className="text-muted-foreground">未回收伏笔</div>
+          </div>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 角色状态 */}
@@ -327,8 +370,48 @@ export default function MemoryPage() {
             </div>
           )}
 
+          <div className="mb-3 space-y-2">
+            <input
+              value={memoryQuery}
+              onChange={(e) => setMemoryQuery(e.target.value)}
+              placeholder="搜索记忆内容"
+              className="w-full rounded border bg-background px-3 py-2 text-sm"
+            />
+            <div className="grid grid-cols-3 gap-2">
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                className="rounded border bg-background px-2 py-1.5 text-xs"
+              >
+                <option value="all">全部类型</option>
+                {typeOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <select
+                value={importanceFilter}
+                onChange={(e) => setImportanceFilter(e.target.value)}
+                className="rounded border bg-background px-2 py-1.5 text-xs"
+              >
+                <option value="all">全部级别</option>
+                {importanceOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <select
+                value={activeFilter}
+                onChange={(e) => setActiveFilter(e.target.value)}
+                className="rounded border bg-background px-2 py-1.5 text-xs"
+              >
+                <option value="active">活跃</option>
+                <option value="archived">已归档</option>
+                <option value="all">全部状态</option>
+              </select>
+            </div>
+          </div>
+
           <div className="space-y-2 max-h-[500px] overflow-y-auto">
-            {memoryItems.map((item) => (
+            {filteredMemoryItems.map((item) => (
               <div key={item.id} className={`rounded-md p-3 border ${item.isActive ? 'bg-muted' : 'bg-muted/50 opacity-60'}`}>
                 {editingId === item.id ? (
                   <div className="space-y-2">
@@ -401,6 +484,11 @@ export default function MemoryPage() {
                 )}
               </div>
             ))}
+            {filteredMemoryItems.length === 0 && (
+              <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                没有匹配的记忆条目
+              </div>
+            )}
           </div>
         </div>
 
@@ -491,6 +579,7 @@ export default function MemoryPage() {
                       <div className="flex gap-3 mb-2 text-xs text-muted-foreground">
                         {fw.setupChapter && <span>埋设: {fw.setupChapter}</span>}
                         {fw.resolveChapter && <span>回收: {fw.resolveChapter}</span>}
+                        {!fw.resolveChapter && fw.resolvePlan && <span>计划: {fw.resolvePlan}</span>}
                       </div>
                       <div className="flex gap-2">
                         <button

@@ -2,9 +2,9 @@
  * Session 工具函数测试
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { readSession, writeSession, clearSession, requireAuth, sessionOptions } from '../session'
-import { sealData, unsealData } from 'iron-session'
+import { sealData } from 'iron-session'
 import { NextRequest, NextResponse } from 'next/server'
 
 describe('readSession', () => {

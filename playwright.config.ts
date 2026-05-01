@@ -35,6 +35,9 @@ export default defineConfig({
   ],
   webServer: {
     command: 'npm run dev',
+    env: {
+      SKIP_AI_POST_FINALIZE: '1',
+    },
     url: 'http://localhost:3003',
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,

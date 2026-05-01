@@ -10,26 +10,6 @@ import { ChapterList } from '@/components/chapter-list'
 import { SearchPanel } from '@/components/search-panel'
 import { BookDeleteButton } from '@/components/book-delete-button'
 
-function statusLabel(status: string): string {
-  const map: Record<string, string> = {
-    unwritten: '未写',
-    ai_draft: 'AI草稿',
-    edited: '已编辑',
-    finalized: '已定稿',
-  }
-  return map[status] || status
-}
-
-function statusColor(status: string): string {
-  const map: Record<string, string> = {
-    unwritten: 'bg-muted text-muted-foreground',
-    ai_draft: 'bg-blue-100 text-blue-700',
-    edited: 'bg-yellow-100 text-yellow-700',
-    finalized: 'bg-green-100 text-green-700',
-  }
-  return map[status] || 'bg-muted'
-}
-
 interface PageProps {
   params: Promise<{ bookId: string }>
 }
@@ -83,7 +63,6 @@ export default async function BookWorkplacePage({ params }: PageProps) {
 
   const totalWords = book.chapters.reduce((sum, ch) => sum + (ch.wordCount || 0), 0)
   const progressPercent = book.targetWords ? Math.min(100, Math.round((totalWords / book.targetWords) * 100)) : 0
-  const finalizedCount = statusCounts['finalized'] || 0
 
   return (
     <main className="container mx-auto px-4 py-8">

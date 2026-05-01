@@ -1,21 +1,41 @@
 /**
  * 10 章深度测试：验证长周期连续生成的稳定性
  *
- * 完整闭环 10 章：生成正文 → 定稿 → 提取记忆
- * 验证：连续性、记忆库增长、角色状态一致性、成本累积
+ * 完整闭环 10 章：生成设定 → 生成人设 → 生成大纲 → 写正文 → 定稿 → 提取记忆。
+ * 该脚本直接调用 lib/ai，避免受登录态、端口和 save-final 后台任务影响。
  *
- * 用法：npx tsx --require dotenv/config scripts/deep-test-10chapters.ts
- * 建议：在 API 稳定时段运行（如工作日上午），预计耗时 15-20 分钟
+ * 用法：npx --yes tsx scripts/deep-test-10chapters.ts
+ * 预计耗时：15-30 分钟，取决于模型响应和续写次数。
  */
 
+import { config } from 'dotenv'
+config({ path: '.env', quiet: true })
+config({ path: '.env.local', override: true, quiet: true })
+
 import { prisma } from '../lib/db'
+import { generateSetting } from '../lib/ai/generateSetting'
+import { generateCharacters } from '../lib/ai/generateCharacters'
+import { generateOutline } from '../lib/ai/generateOutline'
+import { writeChapter } from '../lib/ai/writeChapter'
+import { extractMemory } from '../lib/ai/extractMemory'
 
-const BASE_URL = 'http://localhost:3000'
 const CHAPTERS_TO_TEST = 10
-const API_DELAY_MS = 12000 // 每步间隔 12 秒，避免限流
+const STEP_DELAY_MS = 3000
+const RESUME_BOOK_ID = process.env.RESUME_BOOK_ID?.trim()
 
-interface TestMetrics {
+const TEST_BOOK = {
+  title: `深度测试：星门计划_${new Date().toISOString().replace(/[:.]/g, '-')}`,
+  genre: '科幻悬疑',
+  coreIdea:
+    '2045年，人类发现太阳系边缘的星门，探测队进入后发现门后是一个由古代文明建造的迷宫网络，每个门通向不同的时间线和现实分支。主角是一名量子物理学家，必须在各个分支中寻找回家的路，同时阻止一个试图控制星门的神秘组织。',
+  targetWords: 500000,
+  style: '硬科幻、悬疑紧张、多时间线叙事',
+}
+
+interface ChapterMetric {
+  chapterId: string
   chapterNumber: number
+  title: string
   wordCount: number
   inputTokens: number
   outputTokens: number
@@ -23,26 +43,13 @@ interface TestMetrics {
   memoryItemsAdded: number
   foreshadowingsAdded: number
   durationMs: number
+  opening: string
 }
 
-async function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function post(path: string, body?: object) {
-  await sleep(API_DELAY_MS)
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  const data = await res.json()
-  if (!data.success) throw new Error(`${path} failed: ${data.error}`)
-  return data.data
-}
-
-async function getBookRuns(bookId: string) {
-  return prisma.generationRun.findMany({ where: { bookId } })
+interface TestChapter {
+  id: string
+  chapterNumber: number
+  title: string
 }
 
 function formatTime(ms: number): string {
@@ -50,229 +57,324 @@ function formatTime(ms: number): string {
   return `${Math.floor(ms / 60000)}m${((ms % 60000) / 1000).toFixed(0)}s`
 }
 
-async function main() {
-  console.log('=== 10 章深度测试 ===')
-  console.log(`测试章节数: ${CHAPTERS_TO_TEST}`)
-  console.log(`API 间隔: ${API_DELAY_MS / 1000} 秒`)
-  console.log(`预估耗时: ${formatTime(CHAPTERS_TO_TEST * API_DELAY_MS * 3 + 60000)}\n`)
+function compactText(value: string, length = 80): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, length)
+}
 
-  const overallStart = Date.now()
+function countWords(content: string): number {
+  return content.replace(/\s/g, '').length
+}
 
-  // 1. 清理旧测试数据
-  const oldBooks = await prisma.book.findMany({
-    where: { title: { startsWith: '深度测试' } },
+async function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function hasExtractMemorySuccess(bookId: string, chapterId: string): Promise<boolean> {
+  const run = await prisma.generationRun.findFirst({
+    where: {
+      bookId,
+      chapterId,
+      taskType: 'extract_memory',
+      result: 'success',
+    },
+    select: { id: true },
   })
-  for (const b of oldBooks) {
-    await prisma.book.delete({ where: { id: b.id } })
-    console.log('清理旧测试:', b.title)
-  }
+  return Boolean(run)
+}
 
-  // 2. 创建小说
-  const book = await post('/api/books', {
-    title: '深度测试：星门计划',
-    genre: '科幻悬疑',
-    coreIdea: '2045年，人类发现太阳系边缘的星门，探测队进入后发现门后是一个由古代文明建造的迷宫网络，每个门通向不同的时间线和现实分支。主角是一名量子物理学家，必须在各个分支中寻找回家的路，同时阻止一个试图控制星门的神秘组织',
-    targetWords: 500000,
-    style: '硬科幻、悬疑紧张、多时间线叙事',
+async function buildChapterMetric(bookId: string, chapterId: string, durationMs: number): Promise<ChapterMetric> {
+  const [chapter, runs, memoryItemsAdded] = await Promise.all([
+    prisma.chapter.findUnique({
+      where: { id: chapterId },
+      select: {
+        id: true,
+        chapterNumber: true,
+        title: true,
+        draftContent: true,
+        finalContent: true,
+        wordCount: true,
+      },
+    }),
+    prisma.generationRun.findMany({ where: { bookId, chapterId } }),
+    prisma.memoryItem.count({ where: { bookId, relatedChapter: chapterId } }),
+  ])
+
+  if (!chapter) throw new Error(`Chapter not found: ${chapterId}`)
+
+  const content = chapter.finalContent || chapter.draftContent || ''
+  const chapterNumber = chapter.chapterNumber
+  const actualForeshadowingsAdded = await prisma.foreshadowing.count({
+    where: { bookId, setupChapter: chapterNumber.toString() },
   })
-  console.log('\n创建项目:', book.title)
-  console.log('Book ID:', book.id)
 
-  // 3. 生成基础内容
-  console.log('\n--- 前置步骤 ---')
-
-  await post(`/api/books/${book.id}/setting/generate`)
-  const bible = await prisma.storyBible.findUnique({ where: { bookId: book.id } })
-  console.log('设定完成:', bible?.worldSetting?.slice(0, 60) + '...')
-
-  const chars = await post(`/api/books/${book.id}/characters/generate`)
-  console.log(`人设完成: ${chars.characters.length} 个角色`)
-
-  const outline = await post(`/api/books/${book.id}/outline/generate`)
-  const chapters = outline.chapters
-  console.log(`大纲完成: ${chapters.length} 章`)
-
-  if (chapters.length < CHAPTERS_TO_TEST) {
-    throw new Error(`大纲仅生成 ${chapters.length} 章，少于测试需要的 ${CHAPTERS_TO_TEST} 章`)
+  return {
+    chapterId: chapter.id,
+    chapterNumber,
+    title: chapter.title,
+    wordCount: chapter.wordCount || countWords(content),
+    inputTokens: runs.reduce((sum, run) => sum + (run.inputTokens || 0), 0),
+    outputTokens: runs.reduce((sum, run) => sum + (run.outputTokens || 0), 0),
+    cost: runs.reduce((sum, run) => sum + (run.costEstimate || 0), 0),
+    memoryItemsAdded,
+    foreshadowingsAdded: actualForeshadowingsAdded,
+    durationMs,
+    opening: compactText(content, 120),
   }
+}
 
-  // 4. 连续写 10 章
-  const metrics: TestMetrics[] = []
+async function summarizeBook(bookId: string, metrics: ChapterMetric[], startedAt: number) {
+  const [characters, memoryItems, foreshadowings, generationRuns] = await Promise.all([
+    prisma.character.findMany({ where: { bookId }, orderBy: { orderIndex: 'asc' } }),
+    prisma.memoryItem.findMany({ where: { bookId }, orderBy: { createdAt: 'asc' } }),
+    prisma.foreshadowing.findMany({ where: { bookId }, orderBy: { createdAt: 'asc' } }),
+    prisma.generationRun.findMany({ where: { bookId }, orderBy: { createdAt: 'asc' } }),
+  ])
 
-  console.log('\n=== 开始 10 章连续生成 ===\n')
+  const totalWords = metrics.reduce((sum, item) => sum + item.wordCount, 0)
+  const totalInput = generationRuns.reduce((sum, run) => sum + (run.inputTokens || 0), 0)
+  const totalOutput = generationRuns.reduce((sum, run) => sum + (run.outputTokens || 0), 0)
+  const totalCost = generationRuns.reduce((sum, run) => sum + (run.costEstimate || 0), 0)
 
-  for (let i = 0; i < CHAPTERS_TO_TEST; i++) {
-    const ch = chapters[i]
-    const chapterStart = Date.now()
-    console.log(`\n--- 第 ${i + 1} 章: ${ch.title} ---`)
+  const wordCounts = metrics.map((item) => item.wordCount)
+  const avgWords = Math.round(totalWords / Math.max(1, metrics.length))
+  const minWords = Math.min(...wordCounts)
+  const maxWords = Math.max(...wordCounts)
+  const variance =
+    wordCounts.reduce((sum, count) => sum + Math.pow(count - avgWords, 2), 0) /
+    Math.max(1, wordCounts.length)
+  const stdDev = Math.round(Math.sqrt(variance))
 
-    // 写正文
-    const beforeRuns = await getBookRuns(book.id)
-    const writeResult = await post(`/api/books/${book.id}/chapters/${ch.id}/write`)
-    const afterRuns = await getBookRuns(book.id)
-    const newRuns = afterRuns.filter((r) => !beforeRuns.find((br) => br.id === r.id))
+  const memoryByType = memoryItems.reduce<Record<string, number>>((acc, item) => {
+    acc[item.type] = (acc[item.type] || 0) + 1
+    return acc
+  }, {})
 
-    const content = writeResult.chapter.draftContent || ''
-    const chapterCost = newRuns.reduce((s, r) => s + (r.costEstimate || 0), 0)
-    const chapterInput = newRuns.reduce((s, r) => s + (r.inputTokens || 0), 0)
-    const chapterOutput = newRuns.reduce((s, r) => s + (r.outputTokens || 0), 0)
+  const foreshadowingByStatus = foreshadowings.reduce<Record<string, number>>((acc, item) => {
+    acc[item.status] = (acc[item.status] || 0) + 1
+    return acc
+  }, {})
 
-    console.log(`  字数: ${content.length}`)
-    console.log(`  开头: ${content.slice(0, 50).replace(/\n/g, ' ')}...`)
-    console.log(`  本章成本: ${chapterCost.toFixed(4)} 元 (${chapterInput}/${chapterOutput} tokens)`)
-
-    // 定稿
-    await post(`/api/books/${book.id}/chapters/${ch.id}/save-final`, { content })
-    console.log('  定稿已保存')
-
-    // 提取记忆
-    const beforeMem = await prisma.memoryItem.count({ where: { bookId: book.id } })
-    const beforeFw = await prisma.foreshadowing.count({ where: { bookId: book.id } })
-
-    await post(`/api/books/${book.id}/chapters/${ch.id}/extract-memory`)
-
-    const afterMem = await prisma.memoryItem.count({ where: { bookId: book.id } })
-    const afterFw = await prisma.foreshadowing.count({ where: { bookId: book.id } })
-
-    const memAdded = afterMem - beforeMem
-    const fwAdded = afterFw - beforeFw
-    console.log(`  记忆: +${memAdded} 条, 伏笔: +${fwAdded} 条`)
-
-    const duration = Date.now() - chapterStart
-    console.log(`  耗时: ${formatTime(duration)}`)
-
-    metrics.push({
-      chapterNumber: i + 1,
-      wordCount: content.length,
-      inputTokens: chapterInput,
-      outputTokens: chapterOutput,
-      cost: chapterCost,
-      memoryItemsAdded: memAdded,
-      foreshadowingsAdded: fwAdded,
-      durationMs: duration,
-    })
-  }
-
-  // 5. 综合报告
   console.log('\n\n=== 10 章深度测试报告 ===\n')
-
-  // 5.1 章节统计表
   console.log('章节明细:')
-  console.log('章 | 字数 | 输入T | 输出T | 成本(元) | 记忆+ | 伏笔+ | 耗时')
-  console.log('-'.repeat(80))
-  for (const m of metrics) {
+  console.log('章 | 字数 | 输入T | 输出T | 成本(元) | 记忆+ | 伏笔+ | 耗时 | 标题')
+  console.log('-'.repeat(110))
+  for (const metric of metrics) {
     console.log(
-      `${m.chapterNumber.toString().padStart(2)} | ` +
-      `${m.wordCount.toString().padStart(5)} | ` +
-      `${m.inputTokens.toString().padStart(5)} | ` +
-      `${m.outputTokens.toString().padStart(5)} | ` +
-      `${m.cost.toFixed(4).padStart(8)} | ` +
-      `${m.memoryItemsAdded.toString().padStart(3)} | ` +
-      `${m.foreshadowingsAdded.toString().padStart(3)} | ` +
-      `${formatTime(m.durationMs)}`
+      `${metric.chapterNumber.toString().padStart(2)} | ` +
+        `${metric.wordCount.toString().padStart(5)} | ` +
+        `${metric.inputTokens.toString().padStart(5)} | ` +
+        `${metric.outputTokens.toString().padStart(5)} | ` +
+        `${metric.cost.toFixed(4).padStart(8)} | ` +
+        `${metric.memoryItemsAdded.toString().padStart(3)} | ` +
+        `${metric.foreshadowingsAdded.toString().padStart(3)} | ` +
+        `${formatTime(metric.durationMs).padStart(7)} | ` +
+        metric.title
     )
   }
 
-  // 5.2 汇总统计
-  const totalWords = metrics.reduce((s, m) => s + m.wordCount, 0)
-  const totalInput = metrics.reduce((s, m) => s + m.inputTokens, 0)
-  const totalOutput = metrics.reduce((s, m) => s + m.outputTokens, 0)
-  const totalCost = metrics.reduce((s, m) => s + m.cost, 0)
-  const totalMem = metrics.reduce((s, m) => s + m.memoryItemsAdded, 0)
-  const totalFw = metrics.reduce((s, m) => s + m.foreshadowingsAdded, 0)
-  const avgWords = Math.round(totalWords / CHAPTERS_TO_TEST)
-
-  console.log('-'.repeat(80))
-  console.log(
-    `合计 | ${totalWords.toString().padStart(5)} | ` +
-    `${totalInput.toString().padStart(5)} | ` +
-    `${totalOutput.toString().padStart(5)} | ` +
-    `${totalCost.toFixed(4).padStart(8)} | ` +
-    `${totalMem.toString().padStart(3)} | ` +
-    `${totalFw.toString().padStart(3)}`
-  )
-
-  // 5.3 连续性验证
-  console.log('\n连续性验证:')
-
-  // 角色状态一致性
-  const allChars = await prisma.character.findMany({ where: { bookId: book.id } })
-  const charsWithStatus = allChars.filter((c) => c.currentStatus)
-  console.log(`  角色状态追踪: ${charsWithStatus.length}/${allChars.length} 个角色有状态记录`)
-  for (const c of charsWithStatus.slice(0, 3)) {
-    console.log(`    ${c.name}: ${c.currentStatus?.slice(0, 60)}...`)
-  }
-  if (charsWithStatus.length > 3) {
-    console.log(`    ... 共 ${charsWithStatus.length} 个`)
-  }
-
-  // 记忆库分析
-  const allMemory = await prisma.memoryItem.findMany({
-    where: { bookId: book.id },
-    orderBy: { createdAt: 'asc' },
-  })
-  const memByType: Record<string, number> = {}
-  for (const m of allMemory) {
-    memByType[m.type] = (memByType[m.type] || 0) + 1
-  }
-  console.log('\n  记忆库类型分布:')
-  for (const [type, count] of Object.entries(memByType)) {
-    console.log(`    ${type}: ${count} 条`)
-  }
-
-  // 伏笔状态
-  const allFw = await prisma.foreshadowing.findMany({ where: { bookId: book.id } })
-  const fwByStatus: Record<string, number> = {}
-  for (const f of allFw) {
-    fwByStatus[f.status] = (fwByStatus[f.status] || 0) + 1
-  }
-  console.log('\n  伏笔状态分布:')
-  for (const [status, count] of Object.entries(fwByStatus)) {
-    console.log(`    ${status}: ${count} 条`)
-  }
-
-  // 字数分布
-  const wordCounts = metrics.map((m) => m.wordCount)
-  const minWords = Math.min(...wordCounts)
-  const maxWords = Math.max(...wordCounts)
-  console.log(`\n  字数分布: 最小 ${minWords} | 最大 ${maxWords} | 平均 ${avgWords}`)
-
-  // 检查字数是否稳定（标准差）
-  const variance = wordCounts.reduce((s, w) => s + Math.pow(w - avgWords, 2), 0) / wordCounts.length
-  const stdDev = Math.sqrt(variance)
-  console.log(`  字数标准差: ${Math.round(stdDev)} (${((stdDev / avgWords) * 100).toFixed(1)}%)`)
-
-  // 5.4 总体评估
-  console.log('\n=== 总体评估 ===')
-  const overallDuration = Date.now() - overallStart
-  console.log(`总耗时: ${formatTime(overallDuration)}`)
-  console.log(`总调用: ${await prisma.generationRun.count({ where: { bookId: book.id } })} 次`)
+  console.log('-'.repeat(110))
+  console.log(`总耗时: ${formatTime(Date.now() - startedAt)}`)
+  console.log(`总调用: ${generationRuns.length} 次`)
   console.log(`总成本: ${totalCost.toFixed(4)} 元`)
+  console.log(`总 tokens: ${totalInput.toLocaleString()} → ${totalOutput.toLocaleString()}`)
   console.log(`总字数: ${totalWords} (${(totalWords / 10000).toFixed(1)} 万字)`)
+  console.log(`字数分布: 最小 ${minWords} | 最大 ${maxWords} | 平均 ${avgWords} | 标准差 ${stdDev}`)
 
-  // 连续性评分
-  const continuityScore = Math.min(100, Math.round(
-    (charsWithStatus.length / Math.max(1, allChars.length)) * 30 +
-    (totalMem > 0 ? 30 : 0) +
-    (totalFw > 0 ? 20 : 0) +
-    (stdDev / avgWords < 0.3 ? 20 : 10)
-  ))
-  console.log(`连续性评分: ${continuityScore}/100`)
-
-  if (continuityScore >= 80) {
-    console.log('\n结论: 系统在长周期连续生成中表现良好，记忆库和角色追踪正常工作。')
-  } else if (continuityScore >= 60) {
-    console.log('\n结论: 系统基本可用，但连续性有提升空间。')
-  } else {
-    console.log('\n结论: 连续性存在明显问题，建议检查记忆提取和上下文传递。')
+  console.log('\n角色状态:')
+  for (const character of characters) {
+    console.log(`- ${character.name}(${character.role}): ${compactText(character.currentStatus || '无状态', 100)}`)
   }
 
+  console.log('\n记忆库类型分布:')
+  for (const [type, count] of Object.entries(memoryByType)) {
+    console.log(`- ${type}: ${count} 条`)
+  }
+
+  console.log('\n伏笔状态分布:')
+  for (const [status, count] of Object.entries(foreshadowingByStatus)) {
+    console.log(`- ${status}: ${count} 条`)
+  }
+
+  console.log('\n章节开头抽样:')
+  for (const metric of metrics) {
+    console.log(`- 第${metric.chapterNumber}章: ${metric.opening}`)
+  }
+
+  const continuityScore = Math.min(
+    100,
+    Math.round(
+      (characters.filter((item) => item.currentStatus).length / Math.max(1, characters.length)) * 30 +
+        (memoryItems.length > 0 ? 30 : 0) +
+        (foreshadowings.length > 0 ? 20 : 0) +
+        (stdDev / Math.max(1, avgWords) < 0.3 ? 20 : 10)
+    )
+  )
+  console.log(`\n连续性粗评分: ${continuityScore}/100`)
+
+  return {
+    totalWords,
+    totalInput,
+    totalOutput,
+    totalCost,
+    generationRuns: generationRuns.length,
+    memoryItems: memoryItems.length,
+    foreshadowings: foreshadowings.length,
+    memoryByType,
+    foreshadowingByStatus,
+    continuityScore,
+  }
+}
+
+async function main() {
+  console.log('=== 10 章深度测试 ===')
+  console.log(`测试章节数: ${CHAPTERS_TO_TEST}`)
+  console.log(`测试题材: ${TEST_BOOK.genre}`)
+  console.log(`测试项目: ${RESUME_BOOK_ID || TEST_BOOK.title}`)
+  console.log(`运行模式: ${RESUME_BOOK_ID ? '恢复已有项目' : '新建测试项目'}`)
+  console.log('')
+
+  const startedAt = Date.now()
+  let book: { id: string; title: string }
+  let chapters: TestChapter[]
+
+  if (RESUME_BOOK_ID) {
+    const existingBook = await prisma.book.findUnique({
+      where: { id: RESUME_BOOK_ID },
+      select: { id: true, title: true },
+    })
+    if (!existingBook) throw new Error(`Book not found: ${RESUME_BOOK_ID}`)
+
+    book = existingBook
+    console.log('1. 恢复项目:', book.title)
+    console.log('   Book ID:', book.id)
+
+    chapters = await prisma.chapter.findMany({
+      where: { bookId: book.id, chapterNumber: { lte: CHAPTERS_TO_TEST } },
+      orderBy: { chapterNumber: 'asc' },
+      select: { id: true, chapterNumber: true, title: true },
+    })
+    if (chapters.length < CHAPTERS_TO_TEST) {
+      throw new Error(`已有项目仅有 ${chapters.length} 章，少于测试需要的 ${CHAPTERS_TO_TEST} 章`)
+    }
+    console.log(`2. 读取已有章节: ${chapters.length} 章`)
+  } else {
+    const user = await prisma.user.upsert({
+      where: { username: 'test' },
+      update: {},
+      create: { username: 'test', password: 'test-hash' },
+    })
+
+    book = await prisma.book.create({
+      data: { userId: user.id, ...TEST_BOOK },
+    })
+    console.log('1. 创建项目:', book.title)
+    console.log('   Book ID:', book.id)
+
+    const settingStarted = Date.now()
+    const setting = await generateSetting({ bookId: book.id })
+    console.log(`2. 生成设定: ${formatTime(Date.now() - settingStarted)}`)
+    console.log(`   核心冲突: ${compactText(setting.storyBible.coreConflict, 100)}`)
+    await sleep(STEP_DELAY_MS)
+
+    const charactersStarted = Date.now()
+    const characters = await generateCharacters({ bookId: book.id })
+    console.log(`3. 生成人设: ${formatTime(Date.now() - charactersStarted)} (${characters.characters.length} 个角色)`)
+    await sleep(STEP_DELAY_MS)
+
+    const outlineStarted = Date.now()
+    const outline = await generateOutline({ bookId: book.id })
+    console.log(`4. 生成大纲: ${formatTime(Date.now() - outlineStarted)} (${outline.chapters.length} 章)`)
+
+    if (outline.chapters.length < CHAPTERS_TO_TEST) {
+      throw new Error(`大纲仅生成 ${outline.chapters.length} 章，少于测试需要的 ${CHAPTERS_TO_TEST} 章`)
+    }
+
+    chapters = outline.chapters.slice(0, CHAPTERS_TO_TEST).map((chapter) => ({
+      id: chapter.id,
+      chapterNumber: chapter.chapterNumber,
+      title: chapter.title,
+    }))
+  }
+
+  console.log('5. 选取前 10 章:')
+  for (const chapter of chapters) {
+    console.log(`   - 第${chapter.chapterNumber}章: ${chapter.title}`)
+  }
+
+  const metrics: ChapterMetric[] = []
+  console.log('\n=== 开始连续写 10 章 ===')
+
+  for (const chapter of chapters) {
+    const chapterStarted = Date.now()
+    console.log(`\n--- 第${chapter.chapterNumber}章: ${chapter.title} ---`)
+
+    const currentChapter = await prisma.chapter.findUnique({
+      where: { id: chapter.id },
+      select: {
+        id: true,
+        status: true,
+        draftContent: true,
+        finalContent: true,
+        wordCount: true,
+      },
+    })
+    if (!currentChapter) throw new Error(`Chapter not found: ${chapter.id}`)
+
+    const memoryAlreadyExtracted = await hasExtractMemorySuccess(book.id, chapter.id)
+    if (currentChapter.status === 'finalized' && currentChapter.finalContent && memoryAlreadyExtracted) {
+      const metric = await buildChapterMetric(book.id, chapter.id, 0)
+      metrics.push(metric)
+      console.log(`已完成，跳过: ${metric.wordCount} 字, 记忆 ${metric.memoryItemsAdded} 条, 伏笔 ${metric.foreshadowingsAdded} 条`)
+      continue
+    }
+
+    let content = currentChapter.finalContent || ''
+    let wordCount = currentChapter.wordCount || countWords(content)
+
+    if (currentChapter.status === 'finalized' && currentChapter.finalContent) {
+      console.log(`正文已定稿，补提记忆: ${wordCount} 字`)
+    } else {
+      const writeResult = await writeChapter({
+        bookId: book.id,
+        chapterId: chapter.id,
+      })
+      content = writeResult.chapter.draftContent || ''
+      wordCount = countWords(content)
+
+      await prisma.chapter.update({
+        where: { id: chapter.id },
+        data: {
+          draftContent: content,
+          finalContent: content,
+          status: 'finalized',
+          wordCount,
+        },
+      })
+    }
+
+    if (!(await hasExtractMemorySuccess(book.id, chapter.id))) {
+      await extractMemory({ bookId: book.id, chapterId: chapter.id })
+    }
+
+    const metric = await buildChapterMetric(book.id, chapter.id, Date.now() - chapterStarted)
+    metrics.push(metric)
+
+    console.log(`字数: ${metric.wordCount}`)
+    console.log(`开头: ${metric.opening}`)
+    console.log(`记忆: +${metric.memoryItemsAdded} 条, 伏笔: +${metric.foreshadowingsAdded} 条`)
+    console.log(`本章成本: ${metric.cost.toFixed(4)} 元 (${metric.inputTokens}/${metric.outputTokens} tokens)`)
+    console.log(`耗时: ${formatTime(metric.durationMs)}`)
+
+    await sleep(STEP_DELAY_MS)
+  }
+
+  await summarizeBook(book.id, metrics, startedAt)
   console.log('\n=== 测试完成 ===')
 }
 
 main()
-  .catch((e) => {
-    console.error('\n测试失败:', e)
+  .catch((error) => {
+    console.error('\n测试失败:', error instanceof Error ? error.message : error)
     process.exit(1)
   })
   .finally(async () => {
