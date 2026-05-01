@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  allowedDevOrigins: ['*.ngrok-free.dev', '*.loca.lt'],
 
   // 图片优化（使用外部图片时）
   images: {
