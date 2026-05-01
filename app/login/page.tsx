@@ -2,10 +2,8 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 
 export default function LoginPage() {
-  const router = useRouter()
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -26,6 +24,7 @@ export default function LoginPage() {
       })
       const data = await res.json()
       if (data.success) {
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- 硬刷新确保登录后的服务端 session 立即生效。
         window.location.href = '/'
       } else {
         setMessage(data.error || '操作失败')

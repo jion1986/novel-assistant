@@ -80,11 +80,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 
   const content = lines.join('\n')
+  const extension = format === 'markdown' ? 'md' : 'txt'
+  const utf8Filename = encodeURIComponent(`${book.title}.${extension}`)
 
   return new NextResponse(content, {
     headers: {
       'Content-Type': format === 'markdown' ? 'text/markdown; charset=utf-8' : 'text/plain; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${book.title}.${format === 'markdown' ? 'md' : 'txt'}"`,
+      'Content-Disposition': `attachment; filename="novel-export.${extension}"; filename*=UTF-8''${utf8Filename}`,
     },
   })
 }

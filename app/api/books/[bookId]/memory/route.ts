@@ -72,7 +72,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     },
   }, {
     headers: {
-      'Cache-Control': 'private, max-age=5, stale-while-revalidate=60',
+      'Cache-Control': 'no-store',
     },
   })
 }

@@ -10,6 +10,7 @@
 
 # testing
 /coverage
+/test-output/
 /test-results/
 /playwright-report/
 /playwright/.cache/
@@ -31,6 +32,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+*.log
+*.fixed
 
 # env files
 .env
