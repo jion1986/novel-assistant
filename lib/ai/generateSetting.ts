@@ -19,6 +19,8 @@ interface SettingOutput {
   sellingPoints?: string
   powerSystem?: string
   rules?: string
+  forbiddenChanges?: string
+  styleGuide?: string
 }
 
 /**
@@ -31,7 +33,11 @@ export async function generateSetting(input: GenerateSettingInput): Promise<Gene
   if (!book) throw new Error(`Book not found: ${bookId}`)
 
   const template = await loadPromptTemplate('generate_setting.md')
-  const prompt = fillTemplate(template, { coreIdea: book.coreIdea || book.title })
+  const prompt = fillTemplate(template, {
+    coreIdea: book.coreIdea || book.title,
+    genre: book.genre,
+    targetWords: String(book.targetWords || 300000),
+  })
 
   const callResult = await callKimi({
     messages: [
@@ -56,6 +62,8 @@ export async function generateSetting(input: GenerateSettingInput): Promise<Gene
       sellingPoints: setting.sellingPoints || '',
       powerSystem: setting.powerSystem || '',
       rules: setting.rules || '',
+      forbiddenChanges: setting.forbiddenChanges || '',
+      styleGuide: setting.styleGuide || '',
     },
     update: {
       worldSetting: setting.worldSetting,
@@ -65,6 +73,8 @@ export async function generateSetting(input: GenerateSettingInput): Promise<Gene
       sellingPoints: setting.sellingPoints || '',
       powerSystem: setting.powerSystem || '',
       rules: setting.rules || '',
+      forbiddenChanges: setting.forbiddenChanges || '',
+      styleGuide: setting.styleGuide || '',
     },
   })
 

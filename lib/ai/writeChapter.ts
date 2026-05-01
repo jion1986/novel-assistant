@@ -1,7 +1,16 @@
 import { callKimi } from './kimiClient'
 import { prisma } from '../db'
-import { loadPromptTemplate, fillTemplate, estimateCost } from './utils'
+import { estimateCost } from './utils'
 import { generateTempSummary } from './generateSummary'
+import { buildWriteChapterContext } from './writeContext'
+import {
+  HARD_MAX_CHAPTER_WORDS,
+  MIN_CHAPTER_WORDS,
+  SOFT_MAX_CHAPTER_WORDS,
+  TARGET_CHAPTER_WORDS,
+  countContentWords,
+  trimChapterToWordLimit,
+} from './contextUtils'
 import type { Chapter } from '@prisma/client'
 
 export interface WriteChapterInput {
@@ -19,90 +28,43 @@ export interface WriteChapterResult {
 export async function writeChapter(input: WriteChapterInput): Promise<WriteChapterResult> {
   const { bookId, chapterId } = input
 
-  const book = await prisma.book.findUnique({
-    where: { id: bookId },
-    include: {
-      storyBible: true,
-      characters: { orderBy: { orderIndex: 'asc' } },
-      chapters: { orderBy: { chapterNumber: 'asc' } },
-    },
-  })
-  if (!book) throw new Error(`Book not found: ${bookId}`)
-
-  const chapter = book.chapters.find(c => c.id === chapterId)
-  if (!chapter) throw new Error(`Chapter not found: ${chapterId}`)
-
-  // 获取最近3章定稿的摘要
-  const previousChapters = book.chapters
-    .filter(c => c.chapterNumber < chapter.chapterNumber && c.status === 'finalized')
-    .sort((a, b) => b.chapterNumber - a.chapterNumber)
-    .slice(0, 3)
-
-  const previousSummaries = previousChapters
-    .map(c => `第${c.chapterNumber}章《${c.title}》: ${c.summary || '无摘要'}`)
-    .join('\n')
-
-  // 活跃伏笔
-  const activeForeshadowings = await prisma.foreshadowing.findMany({
-    where: { bookId, status: { in: ['planted', 'developed'] } },
-  })
-
-  // 记忆库摘要
-  const memoryItems = await prisma.memoryItem.findMany({
-    where: { bookId, isActive: true },
-    orderBy: { createdAt: 'desc' },
-    take: 20,
-  })
-
-  const template = await loadPromptTemplate('write_chapter.md')
-  const prompt = fillTemplate(template, {
-    storyBible: JSON.stringify(book.storyBible),
-    characters: book.characters.map(c => `${c.name}: ${c.currentStatus || c.personality}`).join('\n'),
-    chapterGoal: chapter.chapterGoal || '',
-    chapterPlan: chapter.outline || '',
-    previousSummaries: previousSummaries || '无前文',
-    activeForeshadowings: activeForeshadowings.map(f => `${f.name}(${f.status}): ${f.description}`).join('\n') || '无活跃伏笔',
-    memorySummary: memoryItems.map(m => `[${m.type}] ${m.content}`).join('\n') || '无记忆',
-    styleGuide: book.storyBible?.styleGuide || book.style || '',
-    targetWords: String(3000),
-  })
-
-  // 压缩上下文，控制输入长度
-  const compressedPrompt = prompt.slice(0, 12000)
-
-  const targetWordCount = 3000
-  const minWordCount = Math.round(targetWordCount * 0.9)
+  const { prompt } = await buildWriteChapterContext({ bookId, chapterId })
 
   let fullContent = ''
   let totalInputTokens = 0
   let totalOutputTokens = 0
+  let finalModel = ''
+  let compressAttempts = 0
 
   // 第一次生成
   const firstResult = await callKimi({
     messages: [
-      { role: 'system', content: '你是一个专业的小说写手，擅长根据大纲和上下文写出节奏紧凑、人物鲜活、伏笔自然的小说章节。你写的文字要有人味，避免AI腔。你必须达到目标字数，不要输出章节标题。' },
-      { role: 'user', content: compressedPrompt },
+      { role: 'system', content: '你是一个专业的小说写手。请写出节奏紧凑、人物鲜活的章节正文。严格控制在目标字数区间内，达到区间后立即收束，不要输出章节标题。' },
+      { role: 'user', content: prompt },
     ],
     temperature: 0.75,
-    maxTokens: 8000,
+    maxTokens: 4200,
   })
 
   fullContent = firstResult.content
   totalInputTokens += firstResult.inputTokens
   totalOutputTokens += firstResult.outputTokens
+  finalModel = firstResult.model
 
   // 字数检查与续写
-  const chineseWordCount = fullContent.replace(/\s/g, '').length
+  let currentWordCount = countContentWords(fullContent)
   let attempts = 0
   const maxAttempts = 2
 
-  while (chineseWordCount < minWordCount && attempts < maxAttempts) {
+  while (currentWordCount < MIN_CHAPTER_WORDS && attempts < maxAttempts) {
     attempts++
-    const remainingWords = targetWordCount - chineseWordCount
+    const remainingWords = Math.min(TARGET_CHAPTER_WORDS - currentWordCount, SOFT_MAX_CHAPTER_WORDS - currentWordCount)
 
-    const continuePrompt = `你正在写的这一章字数不足。当前已写 ${chineseWordCount} 字，目标 ${targetWordCount} 字，还需要续写约 ${remainingWords} 字。
+    const continuePrompt = `你正在写的这一章字数不足。当前已写 ${currentWordCount} 字，目标区间 ${MIN_CHAPTER_WORDS}-${SOFT_MAX_CHAPTER_WORDS} 字，还需要续写约 ${remainingWords} 字。
 
 **绝对不要重复已经写过的内容。**请从当前内容的结尾处继续往下写，推进剧情、增加细节或扩展场景。
+
+续写后整章不要超过 ${SOFT_MAX_CHAPTER_WORDS} 字；达到目标区间后立刻收束，不要继续扩写。
 
 当前已写内容的最后一段：
 """
@@ -113,21 +75,71 @@ ${fullContent.slice(-500)}
 
     const continueResult = await callKimi({
       messages: [
-        { role: 'system', content: '你是一个专业的小说写手。请继续写下面的章节，不要重复前文，直接输出续写部分。' },
+        { role: 'system', content: '你是一个专业的小说写手。请直接输出续写部分，不要重复前文，严格控制新增字数。' },
         { role: 'user', content: continuePrompt },
       ],
       temperature: 0.75,
-      maxTokens: 8000,
+      maxTokens: Math.min(2400, Math.max(900, Math.ceil(remainingWords * 1.4))),
     })
 
     fullContent += '\n' + continueResult.content
     totalInputTokens += continueResult.inputTokens
     totalOutputTokens += continueResult.outputTokens
 
-    const newCount = fullContent.replace(/\s/g, '').length
-    console.log(`  续写 #${attempts}: ${chineseWordCount} → ${newCount} 字`)
+    const newCount = countContentWords(fullContent)
+    console.log(`  续写 #${attempts}: ${currentWordCount} → ${newCount} 字`)
 
-    if (newCount <= chineseWordCount) break // 没有新增内容，停止
+    if (newCount <= currentWordCount) break // 没有新增内容，停止
+    currentWordCount = newCount
+  }
+
+  if (currentWordCount > HARD_MAX_CHAPTER_WORDS) {
+    compressAttempts++
+    const contentBeforeCompression = fullContent
+    const wordCountBeforeCompression = currentWordCount
+    const compressResult = await callKimi({
+      messages: [
+        {
+          role: 'system',
+          content: '你是小说编辑。请在不改变剧情事实、人物关系和结尾钩子的前提下压缩章节。只输出压缩后的正文，不要解释。',
+        },
+        {
+          role: 'user',
+          content: `下面这一章过长，当前约 ${currentWordCount} 字。请压缩到 ${MIN_CHAPTER_WORDS}-${SOFT_MAX_CHAPTER_WORDS} 字，保留关键事件、人物行动、冲突升级和结尾钩子，删掉重复描写和空泛心理描写。\n\n${fullContent}`,
+        },
+      ],
+      temperature: 0.45,
+      maxTokens: 4200,
+    })
+
+    totalInputTokens += compressResult.inputTokens
+    totalOutputTokens += compressResult.outputTokens
+    finalModel = `${finalModel} -> ${compressResult.model}`
+    const compressedContent = compressResult.content
+    const compressedContentWordCount = countContentWords(compressedContent)
+
+    if (
+      compressedContentWordCount >= MIN_CHAPTER_WORDS &&
+      compressedContentWordCount < wordCountBeforeCompression
+    ) {
+      fullContent = compressedContent
+      currentWordCount = compressedContentWordCount
+      console.log(`  压缩 #${compressAttempts}: ${wordCountBeforeCompression} → ${currentWordCount} 字`)
+    } else {
+      fullContent = contentBeforeCompression
+      currentWordCount = wordCountBeforeCompression
+      console.log(`  压缩 #${compressAttempts} 未采用: ${wordCountBeforeCompression} → ${compressedContentWordCount} 字`)
+    }
+  }
+
+  if (currentWordCount > HARD_MAX_CHAPTER_WORDS) {
+    const trimmed = trimChapterToWordLimit(fullContent, HARD_MAX_CHAPTER_WORDS)
+    const trimmedWordCount = countContentWords(trimmed)
+    if (trimmedWordCount >= MIN_CHAPTER_WORDS && trimmedWordCount < currentWordCount) {
+      console.log(`  硬截断: ${currentWordCount} → ${trimmedWordCount} 字`)
+      fullContent = trimmed
+      currentWordCount = trimmedWordCount
+    }
   }
 
   // 生成临时摘要（确保后续章节有前文参考）
@@ -139,7 +151,7 @@ ${fullContent.slice(-500)}
     data: {
       draftContent: fullContent,
       status: 'ai_draft',
-      wordCount: fullContent.replace(/\s/g, '').length,
+      wordCount: countContentWords(fullContent),
       summary: tempSummary,
     },
   })
@@ -150,7 +162,7 @@ ${fullContent.slice(-500)}
       chapterId,
       versionType: 'ai_draft',
       content: fullContent,
-      note: `AI 生成，模型: ${firstResult.model}${attempts > 0 ? ` (续写${attempts}次)` : ''}`,
+      note: `AI 生成，模型: ${finalModel || firstResult.model}${attempts > 0 ? ` (续写${attempts}次)` : ''}${compressAttempts > 0 ? ` (压缩${compressAttempts}次)` : ''}`,
     },
   })
 
@@ -161,7 +173,7 @@ ${fullContent.slice(-500)}
       taskType: 'write',
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,
-      model: firstResult.model,
+      model: finalModel || firstResult.model,
       result: 'success',
       costEstimate: estimateCost(totalInputTokens, totalOutputTokens),
     },

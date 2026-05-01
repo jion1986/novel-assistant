@@ -19,6 +19,8 @@ interface CharacterOutput {
   personality?: string
   goal?: string
   speakingStyle?: string
+  currentStatus?: string
+  relationships?: string
   lockedFacts?: string[]
 }
 
@@ -42,6 +44,7 @@ export async function generateCharacters(input: GenerateCharactersInput): Promis
   const prompt = fillTemplate(template, {
     storyBible: book.storyBible?.worldSetting || '',
     coreIdea: book.coreIdea || book.title,
+    genre: book.genre,
   })
 
   const callResult = await callKimi({
@@ -73,6 +76,8 @@ export async function generateCharacters(input: GenerateCharactersInput): Promis
         personality: c.personality || '',
         goal: c.goal || '',
         speakingStyle: c.speakingStyle || '',
+        currentStatus: c.currentStatus || '',
+        relationships: c.relationships || '',
         lockedFacts: JSON.stringify(c.lockedFacts || []),
         orderIndex: i,
       },

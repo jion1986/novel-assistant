@@ -19,7 +19,7 @@ function estimateTokens(text: string): number {
   // 简单估算：中文字符按 1.5 tokens，英文按 0.5 tokens
   let tokens = 0
   for (const char of text) {
-    tokens += char.charCodeAt(0) > 127 ? 1.5 : 0.5
+    tokens += char.charCodeAt(0) > 127 ? TOKEN_RATE : 0.5
   }
   return Math.ceil(tokens)
 }

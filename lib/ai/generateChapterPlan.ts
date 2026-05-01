@@ -68,6 +68,9 @@ export async function generateChapterPlan(input: GenerateChapterPlanInput): Prom
   const prompt = fillTemplate(template, {
     storyBible: JSON.stringify(book.storyBible),
     outline: outlineText,
+    characters: book.characters
+      .map((c) => `${c.name}(${c.role}): ${c.currentStatus || c.personality || ''}`)
+      .join('\n'),
     targetWords: String(book.targetWords || 300000),
   })
 

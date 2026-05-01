@@ -2,9 +2,47 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { readSession } from '@/lib/session'
 import { generateSummary } from '@/lib/ai/generateSummary'
+import { extractMemory } from '@/lib/ai/extractMemory'
 
 interface RouteParams {
   params: Promise<{ bookId: string; chapterId: string }>
+}
+
+async function recordPostFinalizeError(
+  bookId: string,
+  chapterId: string,
+  taskType: 'chapter_summary' | 'extract_memory',
+  error: unknown
+) {
+  const message = error instanceof Error ? error.message : String(error)
+  await prisma.generationRun.create({
+    data: {
+      bookId,
+      chapterId,
+      taskType,
+      model: 'unknown',
+      result: 'error',
+      errorMessage: message.slice(0, 1000),
+    },
+  })
+}
+
+async function runPostFinalizeTasks(bookId: string, chapterId: string) {
+  if (process.env.SKIP_AI_POST_FINALIZE === '1') return
+
+  try {
+    await generateSummary({ chapterId })
+  } catch (error) {
+    console.error('Generate summary failed:', error)
+    await recordPostFinalizeError(bookId, chapterId, 'chapter_summary', error)
+  }
+
+  try {
+    await extractMemory({ bookId, chapterId })
+  } catch (error) {
+    console.error('Extract memory failed:', error)
+    await recordPostFinalizeError(bookId, chapterId, 'extract_memory', error)
+  }
 }
 
 /**
@@ -29,12 +67,31 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ success: false, error: 'Book not found' }, { status: 404 })
   }
 
+  const existingChapter = await prisma.chapter.findFirst({
+    where: { id: chapterId, bookId },
+  })
+  if (!existingChapter) {
+    return NextResponse.json({ success: false, error: 'Chapter not found' }, { status: 404 })
+  }
+
+  const content =
+    typeof body.content === 'string' && body.content.trim()
+      ? body.content
+      : existingChapter.draftContent || existingChapter.finalContent || ''
+
+  if (!content.trim()) {
+    return NextResponse.json(
+      { success: false, error: 'Cannot finalize an empty chapter' },
+      { status: 400 }
+    )
+  }
+
   const chapter = await prisma.chapter.update({
     where: { id: chapterId, bookId },
     data: {
-      finalContent: body.content,
+      finalContent: content,
       status: 'finalized',
-      wordCount: body.content?.length || 0,
+      wordCount: content.replace(/\s/g, '').length,
     },
   })
 
@@ -43,15 +100,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     data: {
       chapterId,
       versionType: 'final',
-      content: body.content,
+      content,
       note: body.note || '用户定稿',
     },
   })
 
-  // 自动生成高质量摘要（不阻塞响应）
-  generateSummary({ chapterId }).catch((err) => {
-    console.error('Generate summary failed:', err)
+  // 自动生成高质量摘要并基于定稿提取记忆，不阻塞保存响应。
+  runPostFinalizeTasks(bookId, chapterId).catch((error) => {
+    console.error('Post-finalize tasks failed:', error)
   })
 
-  return NextResponse.json({ success: true, data: chapter })
+  return NextResponse.json({ success: true, data: chapter, memoryTriggered: true })
 }

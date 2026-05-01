@@ -32,6 +32,18 @@ interface OutlineOutput {
   volumes: OutlineVolume[]
 }
 
+function uniqueChapterTitle(title: string, chapterNumber: number, usedTitles: Set<string>): string {
+  const normalized = title.trim() || `第${chapterNumber}章`
+  if (!usedTitles.has(normalized)) {
+    usedTitles.add(normalized)
+    return normalized
+  }
+
+  const fallback = `${normalized}（第${chapterNumber}章）`
+  usedTitles.add(fallback)
+  return fallback
+}
+
 /**
  * 生成全书大纲和分章计划
  *
@@ -73,13 +85,15 @@ export async function generateOutline(input: GenerateOutlineInput): Promise<Gene
 
   // 创建章节记录
   const chapters: Chapter[] = []
+  const usedTitles = new Set<string>()
   for (const volume of output.volumes) {
     for (const ch of volume.chapters) {
+      const title = uniqueChapterTitle(ch.title, ch.chapterNumber, usedTitles)
       const chapter = await prisma.chapter.create({
         data: {
           bookId,
           chapterNumber: ch.chapterNumber,
-          title: ch.title,
+          title,
           chapterGoal: ch.goal,
           outline: [
             `关键事件: ${ch.keyEvents.join(', ')}`,

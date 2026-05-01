@@ -5,7 +5,7 @@
  * 保留此文件以兼容现有调用方，无需修改各生成模块。
  */
 
-import { callModel, type ModelCallOptions, type ModelCallResult } from './multiModelClient'
+import { callModel, type ModelCallOptions } from './multiModelClient'
 
 export interface KimiCallOptions {
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
