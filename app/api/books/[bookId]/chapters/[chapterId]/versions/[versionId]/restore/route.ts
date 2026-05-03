@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { readSession } from '@/lib/session'
+import { saveChapterToLocal } from '@/lib/localExport'
 
 interface RouteParams {
   params: Promise<{ bookId: string; chapterId: string; versionId: string }>
@@ -56,6 +57,21 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         note: `回退到 ${version.versionType === 'ai_draft' ? 'AI草稿' : version.versionType === 'final' ? '定稿' : '编辑版本'} (${new Date(version.createdAt).toLocaleString()})`,
       },
     })
+
+    // 自动保存到本地
+    try {
+      const localPath = saveChapterToLocal({
+        bookTitle: book.title,
+        chapterNumber: chapter.chapterNumber,
+        chapterTitle: chapter.title,
+        content: version.content,
+        status: 'edited',
+        wordCount: version.content.length,
+      })
+      console.log(`  版本恢复已保存到本地: ${localPath}`)
+    } catch (saveError) {
+      console.error('保存到本地失败:', saveError)
+    }
 
     return NextResponse.json({ success: true, data: chapter })
   } catch (error) {

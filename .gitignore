@@ -16,6 +16,9 @@
 /playwright/.cache/
 /e2e/.auth/
 
+# local novel exports
+/local-novels/
+
 # next.js
 /.next/
 /out/

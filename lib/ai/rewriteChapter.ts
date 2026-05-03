@@ -1,6 +1,7 @@
 import { callKimi } from './kimiClient'
 import { prisma } from '../db'
 import { loadPromptTemplate, fillTemplate, estimateCost } from './utils'
+import { saveChapterToLocal } from '../localExport'
 import type { Chapter } from '@prisma/client'
 
 export interface RewriteChapterInput {
@@ -86,6 +87,19 @@ export async function rewriteChapter(input: RewriteChapterInput): Promise<Rewrit
       costEstimate: estimateCost(callResult.inputTokens, callResult.outputTokens),
     },
   })
+
+  // 自动保存到本地
+  if (chapter.book) {
+    const localPath = saveChapterToLocal({
+      bookTitle: chapter.book.title,
+      chapterNumber: chapter.chapterNumber,
+      chapterTitle: chapter.title,
+      content: callResult.content,
+      status: 'ai_draft',
+      wordCount: callResult.content.length,
+    })
+    console.log(`  已保存到本地: ${localPath}`)
+  }
 
   return { chapter: updatedChapter }
 }

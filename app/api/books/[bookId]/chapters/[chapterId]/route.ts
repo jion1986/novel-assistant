@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { readSession } from '@/lib/session'
+import { saveChapterToLocal } from '@/lib/localExport'
 import { z } from 'zod'
 
 interface RouteParams {
@@ -73,6 +74,25 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     where: { id: chapterId, bookId },
     data: parsed.data,
   })
+
+  // 如果有内容更新，自动保存到本地
+  if (parsed.data.draftContent || parsed.data.finalContent) {
+    try {
+      const content = parsed.data.finalContent || parsed.data.draftContent || ''
+      const status = parsed.data.status || chapter.status
+      const localPath = saveChapterToLocal({
+        bookTitle: book.title,
+        chapterNumber: chapter.chapterNumber,
+        chapterTitle: chapter.title,
+        content,
+        status,
+        wordCount: content.replace(/\s/g, '').length,
+      })
+      console.log(`  编辑已保存到本地: ${localPath}`)
+    } catch (saveError) {
+      console.error('保存到本地失败:', saveError)
+    }
+  }
 
   return NextResponse.json({ success: true, data: chapter })
 }

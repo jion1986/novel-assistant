@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { readSession } from '@/lib/session'
 import { generateSummary } from '@/lib/ai/generateSummary'
 import { extractMemory } from '@/lib/ai/extractMemory'
+import { saveChapterToLocal } from '@/lib/localExport'
 
 interface RouteParams {
   params: Promise<{ bookId: string; chapterId: string }>
@@ -109,6 +110,21 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   runPostFinalizeTasks(bookId, chapterId).catch((error) => {
     console.error('Post-finalize tasks failed:', error)
   })
+
+  // 自动保存定稿到本地
+  try {
+    const localPath = saveChapterToLocal({
+      bookTitle: book.title,
+      chapterNumber: existingChapter.chapterNumber,
+      chapterTitle: existingChapter.title,
+      content,
+      status: 'finalized',
+      wordCount: content.replace(/\s/g, '').length,
+    })
+    console.log(`  定稿已保存到本地: ${localPath}`)
+  } catch (saveError) {
+    console.error('保存到本地失败:', saveError)
+  }
 
   return NextResponse.json({ success: true, data: chapter, memoryTriggered: true })
 }

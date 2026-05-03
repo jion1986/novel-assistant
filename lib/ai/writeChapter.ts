@@ -3,6 +3,7 @@ import { prisma } from '../db'
 import { estimateCost } from './utils'
 import { generateTempSummary } from './generateSummary'
 import { buildWriteChapterContext } from './writeContext'
+import { saveChapterToLocal } from '../localExport'
 import {
   HARD_MAX_CHAPTER_WORDS,
   MIN_CHAPTER_WORDS,
@@ -199,6 +200,23 @@ ${fullContent.slice(-500)}
       costEstimate: estimateCost(totalInputTokens, totalOutputTokens),
     },
   })
+
+  // 自动保存到本地
+  const chapterWithBook = await prisma.chapter.findUnique({
+    where: { id: chapterId },
+    include: { book: { select: { title: true } } },
+  })
+  if (chapterWithBook && chapterWithBook.book) {
+    const localPath = saveChapterToLocal({
+      bookTitle: chapterWithBook.book.title,
+      chapterNumber: chapterWithBook.chapterNumber,
+      chapterTitle: chapterWithBook.title,
+      content: fullContent,
+      status: 'ai_draft',
+      wordCount: currentWordCount,
+    })
+    console.log(`  已保存到本地: ${localPath}`)
+  }
 
   return { chapter: updatedChapter }
 }
