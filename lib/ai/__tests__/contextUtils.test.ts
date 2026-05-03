@@ -73,7 +73,7 @@ describe('contextUtils', () => {
       },
     ])
 
-    expect(context).toContain('锁定事实: 没有子女')
+    expect(context).toContain('锁定事实：没有子女')
   })
 
   it('章节过长时按句子边界裁剪到硬上限附近', () => {

@@ -39,10 +39,10 @@ export async function writeChapter(input: WriteChapterInput): Promise<WriteChapt
   // 第一次生成
   const firstResult = await callKimi({
     messages: [
-      { role: 'system', content: '你是一个专业的小说写手。请写出节奏紧凑、人物鲜活的章节正文。严格控制在目标字数区间内，达到区间后立即收束，不要输出章节标题。' },
+      { role: 'system', content: '你是一位顶尖的网络小说写手，日更过万、擅长多题材。你深知中国网文读者的痛点：节奏拖沓、对话水、描写空泛、AI味重。你的写作风格是——信息密度高、情绪节奏快、细节有画面感、对话有个性。请写出节奏紧凑、人物鲜活的章节正文。严格控制在目标字数区间内，达到区间后立即收束，不要输出章节标题。' },
       { role: 'user', content: prompt },
     ],
-    temperature: 0.75,
+    temperature: 0.85,
     maxTokens: 4200,
   })
 
@@ -62,9 +62,11 @@ export async function writeChapter(input: WriteChapterInput): Promise<WriteChapt
 
     const continuePrompt = `你正在写的这一章字数不足。当前已写 ${currentWordCount} 字，目标区间 ${MIN_CHAPTER_WORDS}-${SOFT_MAX_CHAPTER_WORDS} 字，还需要续写约 ${remainingWords} 字。
 
-**绝对不要重复已经写过的内容。**请从当前内容的结尾处继续往下写，推进剧情、增加细节或扩展场景。
-
-续写后整章不要超过 ${SOFT_MAX_CHAPTER_WORDS} 字；达到目标区间后立刻收束，不要继续扩写。
+续写要求：
+- 绝对不要重复已经写过的内容
+- 续写部分必须带来新的信息增量（新发现、新阻碍、新揭示或新关系）
+- 不要只是"展开描写"，要推进剧情或增加新的冲突层
+- 续写后整章不要超过 ${SOFT_MAX_CHAPTER_WORDS} 字；达到目标区间后立刻收束，用结尾钩子结束
 
 当前已写内容的最后一段：
 """

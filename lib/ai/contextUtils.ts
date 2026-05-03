@@ -17,6 +17,7 @@ export interface CharacterContextItem {
   role?: string | null
   identity?: string | null
   personality?: string | null
+  speakingStyle?: string | null
   currentStatus?: string | null
   relationships?: string | null
   lockedFacts?: string | null
@@ -52,15 +53,16 @@ export function formatCharactersForContext(characters: CharacterContextItem[], m
     characters
       .map((c) =>
         [
-          `${c.name}(${c.role || 'unknown'})`,
-          `身份: ${c.identity || '无'}`,
-          `性格: ${c.personality || '无'}`,
-          `当前状态: ${c.currentStatus || '无状态'}`,
-          `关系: ${c.relationships || '无'}`,
-          `锁定事实: ${c.lockedFacts || '无'}`,
-        ].join(' | ')
+          `【${c.name}】${c.role || 'unknown'}`,
+          `  身份：${c.identity || '无'}`,
+          `  性格：${c.personality || '无'}`,
+          `  说话风格：${c.speakingStyle || '无'}`,
+          `  当前状态：${c.currentStatus || '无状态'}`,
+          `  关系：${c.relationships || '无'}`,
+          `  锁定事实：${c.lockedFacts || '无'}`,
+        ].join('\n')
       )
-      .join('\n') || '无'
+      .join('\n\n') || '无'
 
   return limitText(content, maxChars)
 }
