@@ -101,11 +101,33 @@ export async function buildWriteChapterContext(input: {
     .map((item) => `${item.name}(${item.status}): ${limitText(item.description, 180)}`)
     .join('\n')
 
+  // 构建章节衔接状态表（替代简单摘要，提供结构化上下文）
+  const lastChapter = previousChapters[0]
+  const lastChapterContent = lastChapter ? (lastChapter.finalContent || lastChapter.draftContent || '') : ''
+  const lastLanding = lastChapterContent ? limitText(lastChapterContent.slice(-500), 500) : '无'
+
+  const resolvedEvents = previousChapters
+    .slice()
+    .sort((a, b) => a.chapterNumber - b.chapterNumber)
+    .map((item) => `第${item.chapterNumber}章《${item.title}》：${limitText(item.summary || '无摘要', 200)}`)
+    .join('\n')
+
+  const recentConflictRecord = previousChapters
+    .slice()
+    .sort((a, b) => a.chapterNumber - b.chapterNumber)
+    .map((item) => `第${item.chapterNumber}章《${item.title}》：${limitText(item.summary || '无摘要', 160)}`)
+    .join('\n')
+
+  const chapterState = lastChapter
+    ? `【章节衔接状态】\n\n上一章落点（本章必须从此场景和情绪状态继续，禁止跳转到全新场景重新开局）：\n${lastLanding}\n\n已解决事件（最近${previousChapters.length}章）：\n${resolvedEvents}\n\n未解决线索：\n${activeForeshadowings.length > 0 ? activeForeshadowings.map((item) => `• ${item.name}(${item.status})：${limitText(item.description, 120)}`).join('\n') : '• 无活跃伏笔'}\n\n最近${previousChapters.length}章冲突记录：\n${recentConflictRecord}\n\n本章硬性约束：\n• 不能重复最近3章已使用过的核心冲突类型（如第N章是"外部阻碍"，本章必须是其他类型）\n• 必须从"上一章落点"的场景和情绪状态继续，禁止像写新第一章那样重新开局\n• 主角不能做上一章已经做过的相同决定或采取相同行动\n• 必须推进至少一个"未解决线索"（呼应、升级或部分回收）\n• 必须带来新的信息增量，不能只是重复已知信息`
+    : '【章节衔接状态】\n本章是第1章，无前文状态。必须快速进入核心场景，不要铺垫。'
+
   const prompt = fillTemplate(template, {
     storyBible: limitText(JSON.stringify(book.storyBible), 2600),
     characters: formatCharactersForContext(book.characters),
     chapterGoal: limitText(chapter.chapterGoal, 800),
     chapterPlan: limitText(chapter.outline, 1200),
+    chapterState,
     previousSummaries: previousSummaries || '无前文',
     recentOpenings: recentOpenings || '无',
     openingAvoidance,

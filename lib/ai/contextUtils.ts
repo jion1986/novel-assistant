@@ -49,8 +49,12 @@ export function estimatePromptTokens(content: string): number {
 }
 
 export function formatCharactersForContext(characters: CharacterContextItem[], maxChars = 2600): string {
+  const hardLock =
+    '【角色绝对锁定】以下是你能使用的全部角色。禁止引入任何未列出的新角色（包括名字、绰号、代称）。禁止给已有角色添加列表中没有的设定。每个角色的性格、说话风格和当前状态必须与列表一致，不能突然改变。\n'
+
   const content =
-    characters
+    hardLock +
+    (characters
       .map((c) =>
         [
           `【${c.name}】${c.role || 'unknown'}`,
@@ -62,7 +66,7 @@ export function formatCharactersForContext(characters: CharacterContextItem[], m
           `  锁定事实：${c.lockedFacts || '无'}`,
         ].join('\n')
       )
-      .join('\n\n') || '无'
+      .join('\n\n') || '无')
 
   return limitText(content, maxChars)
 }
