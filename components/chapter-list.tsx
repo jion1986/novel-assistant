@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import {
   DndContext,
@@ -64,7 +64,8 @@ function statusColor(status: string): string {
   return map[status] || 'bg-muted'
 }
 
-function SortableChapterItem({
+// 共享的章节项展示组件(SSR/CSR 共用,避免 @dnd-kit hydration mismatch)
+function ChapterItemContent({
   chapter,
   bookId,
   onDelete,
@@ -72,6 +73,7 @@ function SortableChapterItem({
   selected,
   onSelect,
   batchMode,
+  dragHandle,
 }: {
   chapter: Chapter
   bookId: string
@@ -80,26 +82,10 @@ function SortableChapterItem({
   selected: boolean
   onSelect: (id: string) => void
   batchMode: boolean
+  dragHandle?: React.ReactNode
 }) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: chapter.id })
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  }
-
   return (
     <div
-      ref={setNodeRef}
-      style={style}
       className={`flex items-center justify-between rounded-md border px-4 py-3 hover:bg-accent transition-colors group bg-card ${selected ? 'ring-2 ring-primary' : ''}`}
     >
       <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -111,21 +97,22 @@ function SortableChapterItem({
             className="rounded border bg-background"
           />
         ) : (
-          <button
-            {...attributes}
-            {...listeners}
-            className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground p-1"
-            title="拖拽排序"
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-              <circle cx="2" cy="3" r="1.2" />
-              <circle cx="6" cy="3" r="1.2" />
-              <circle cx="10" cy="3" r="1.2" />
-              <circle cx="2" cy="9" r="1.2" />
-              <circle cx="6" cy="9" r="1.2" />
-              <circle cx="10" cy="9" r="1.2" />
-            </svg>
-          </button>
+          dragHandle ?? (
+            <button
+              className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground p-1"
+              title="拖拽排序"
+              disabled
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                <circle cx="2" cy="3" r="1.2" />
+                <circle cx="6" cy="3" r="1.2" />
+                <circle cx="10" cy="3" r="1.2" />
+                <circle cx="2" cy="9" r="1.2" />
+                <circle cx="6" cy="9" r="1.2" />
+                <circle cx="10" cy="9" r="1.2" />
+              </svg>
+            </button>
+          )
         )}
         <Link
           href={`/books/${bookId}/chapters/${chapter.id}`}
@@ -159,6 +146,70 @@ function SortableChapterItem({
   )
 }
 
+function SortableChapterItem({
+  chapter,
+  bookId,
+  onDelete,
+  deleting,
+  selected,
+  onSelect,
+  batchMode,
+}: {
+  chapter: Chapter
+  bookId: string
+  onDelete: (id: string) => void
+  deleting: string | null
+  selected: boolean
+  onSelect: (id: string) => void
+  batchMode: boolean
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: chapter.id })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      <ChapterItemContent
+        chapter={chapter}
+        bookId={bookId}
+        onDelete={onDelete}
+        deleting={deleting}
+        selected={selected}
+        onSelect={onSelect}
+        batchMode={batchMode}
+        dragHandle={
+          <button
+            {...attributes}
+            {...listeners}
+            className="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground p-1"
+            title="拖拽排序"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+              <circle cx="2" cy="3" r="1.2" />
+              <circle cx="6" cy="3" r="1.2" />
+              <circle cx="10" cy="3" r="1.2" />
+              <circle cx="2" cy="9" r="1.2" />
+              <circle cx="6" cy="9" r="1.2" />
+              <circle cx="10" cy="9" r="1.2" />
+            </svg>
+          </button>
+        }
+      />
+    </div>
+  )
+}
+
 export function ChapterList({ bookId, initialChapters }: ChapterListProps) {
   const [chapters, setChapters] = useState(initialChapters)
   const [deleting, setDeleting] = useState<string | null>(null)
@@ -169,6 +220,11 @@ export function ChapterList({ bookId, initialChapters }: ChapterListProps) {
   const [batchMode, setBatchMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [batchFinalizing, setBatchFinalizing] = useState(false)
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  )
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -412,7 +468,7 @@ export function ChapterList({ bookId, initialChapters }: ChapterListProps) {
 
       {chapters.length === 0 ? (
         <p className="text-sm text-muted-foreground">暂无章节，先生成大纲</p>
-      ) : (
+      ) : mounted ? (
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
@@ -438,6 +494,21 @@ export function ChapterList({ bookId, initialChapters }: ChapterListProps) {
             </div>
           </SortableContext>
         </DndContext>
+      ) : (
+        <div className="space-y-2">
+          {chapters.map((ch) => (
+            <ChapterItemContent
+              key={ch.id}
+              chapter={ch}
+              bookId={bookId}
+              onDelete={handleDelete}
+              deleting={deleting}
+              selected={selectedIds.has(ch.id)}
+              onSelect={toggleSelect}
+              batchMode={batchMode}
+            />
+          ))}
+        </div>
       )}
     </div>
   )

@@ -73,6 +73,10 @@ export default function ChapterEditPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('edit')
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [streaming, setStreaming] = useState(false)
+  const [adjacentChapters, setAdjacentChapters] = useState<{
+    prev?: { id: string; title: string; chapterNumber: number }
+    next?: { id: string; title: string; chapterNumber: number }
+  }>({})
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
   const autoSaveTimer = useRef<NodeJS.Timeout | null>(null)
@@ -114,6 +118,21 @@ export default function ChapterEditPage() {
           const initial = data.data.draftContent || data.data.finalContent || ''
           setContent(initial)
           setOriginalContent(initial)
+        }
+
+        // 加载相邻章节用于导航
+        try {
+          const listRes = await fetch(`/api/books/${bookId}/chapters`)
+          const listData = await listRes.json()
+          if (listData.success && Array.isArray(listData.data)) {
+            const currentIndex = listData.data.findIndex((c: { id: string }) => c.id === chapterId)
+            setAdjacentChapters({
+              prev: currentIndex > 0 ? listData.data[currentIndex - 1] : undefined,
+              next: currentIndex >= 0 && currentIndex < listData.data.length - 1 ? listData.data[currentIndex + 1] : undefined,
+            })
+          }
+        } catch {
+          // 忽略相邻章节加载失败
         }
       } catch (e) {
         console.error(e)
@@ -397,10 +416,28 @@ export default function ChapterEditPage() {
 
   return (
     <main className="container mx-auto px-4 py-8">
-      <div className="mb-6">
+      <div className="mb-6 flex items-center justify-between">
         <Link href={`/books/${bookId}`} className="text-sm text-muted-foreground hover:text-foreground">
           ← 返回工作台
         </Link>
+        <div className="flex items-center gap-4">
+          {adjacentChapters.prev && (
+            <Link
+              href={`/books/${bookId}/chapters/${adjacentChapters.prev.id}`}
+              className="text-sm text-primary hover:underline"
+            >
+              ← 上一章
+            </Link>
+          )}
+          {adjacentChapters.next && (
+            <Link
+              href={`/books/${bookId}/chapters/${adjacentChapters.next.id}`}
+              className="text-sm text-primary hover:underline"
+            >
+              下一章 →
+            </Link>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">

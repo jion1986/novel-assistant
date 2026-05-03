@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { toast } from '@/components/toast'
 import {
   estimateWriteChapterCost,
   formatCost,
@@ -94,6 +95,7 @@ export function ChapterActions({ bookId, chapterId, status, onContentReplace }: 
       })
       const data = await res.json()
       if (!data.success) {
+        toast(`改写失败: ${data.error}`, 'error')
         setMessage(`改写失败: ${data.error}`)
         return
       }
@@ -102,10 +104,13 @@ export function ChapterActions({ bookId, chapterId, status, onContentReplace }: 
       if (typeof newContent === 'string') {
         onContentReplace?.(newContent)
       }
+      toast('改写成功！已替换为新的 AI 草稿', 'success')
       setMessage('已按检查建议改写为新的 AI 草稿')
       setCheckResult(null)
     } catch (e) {
-      setMessage(`改写请求失败: ${e instanceof Error ? e.message : String(e)}`)
+      const errMsg = e instanceof Error ? e.message : String(e)
+      toast(`改写请求失败: ${errMsg}`, 'error')
+      setMessage(`改写请求失败: ${errMsg}`)
     } finally {
       setLoading(null)
     }
