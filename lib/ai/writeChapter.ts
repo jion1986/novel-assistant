@@ -32,7 +32,7 @@ export interface WriteChapterResult {
 export async function writeChapter(input: WriteChapterInput): Promise<WriteChapterResult> {
   const { bookId, chapterId } = input
 
-  const { prompt } = await buildWriteChapterContext({ bookId, chapterId })
+  const { prompt, chapter } = await buildWriteChapterContext({ bookId, chapterId })
 
   // 获取书籍信息（题材、角色等）
   const book = await prisma.book.findUnique({
@@ -184,43 +184,49 @@ ${fullContent.slice(-500)}
   }
 
   // P4: 反AI味润色（检测套路句式并改写）
-  const polishResult = await polishChapter(fullContent)
-  if (polishResult.issuesFound > 0) {
-    if (polishResult.issuesFixed > 0) {
-      console.log(`  润色: 发现 ${polishResult.issuesFound} 处套路句式，已修复 ${polishResult.issuesFixed} 处`)
-      fullContent = polishResult.content
-      currentWordCount = countContentWords(fullContent)
-    } else {
-      console.log(`  润色: 发现 ${polishResult.issuesFound} 处套路句式，未修复（保留原文）`)
+  const skipPolishReview = process.env.SKIP_POLISH_REVIEW === '1'
+
+  if (!skipPolishReview) {
+    const polishResult = await polishChapter(fullContent)
+    if (polishResult.issuesFound > 0) {
+      if (polishResult.issuesFixed > 0) {
+        console.log(`  润色: 发现 ${polishResult.issuesFound} 处套路句式，已修复 ${polishResult.issuesFixed} 处`)
+        fullContent = polishResult.content
+        currentWordCount = countContentWords(fullContent)
+      } else {
+        console.log(`  润色: 发现 ${polishResult.issuesFound} 处套路句式，未修复（保留原文）`)
+      }
+      totalInputTokens += polishResult.inputTokens
+      totalOutputTokens += polishResult.outputTokens
     }
-    totalInputTokens += polishResult.inputTokens
-    totalOutputTokens += polishResult.outputTokens
-  }
 
-  // P3: 设定一致性审查
-  const prevChapter = await prisma.chapter.findFirst({
-    where: { bookId, chapterNumber: { lt: (await prisma.chapter.findUnique({ where: { id: chapterId } }))?.chapterNumber || 0 } },
-    orderBy: { chapterNumber: 'desc' },
-    select: { summary: true },
-  })
+    // P3: 设定一致性审查
+    const prevChapter = await prisma.chapter.findFirst({
+      where: { bookId, chapterNumber: { lt: chapter.chapterNumber } },
+      orderBy: { chapterNumber: 'desc' },
+      select: { summary: true },
+    })
 
-  const reviewResult = await reviewConsistency({
-    content: fullContent,
-    characters: book?.characters || [],
-    genre: book?.genre,
-    previousSummary: prevChapter?.summary,
-    chapterTitle: (await prisma.chapter.findUnique({ where: { id: chapterId } }))?.title || '',
-  })
+    const reviewResult = await reviewConsistency({
+      content: fullContent,
+      characters: book?.characters || [],
+      genre: book?.genre,
+      previousSummary: prevChapter?.summary,
+      chapterTitle: chapter.title,
+    })
 
-  if (!reviewResult.passed) {
-    const highIssues = reviewResult.issues.filter((i) => i.severity === 'high')
-    const medIssues = reviewResult.issues.filter((i) => i.severity === 'medium')
-    console.log(`  审查: ${highIssues.length} 个严重问题, ${medIssues.length} 个中等问题`)
-    for (const issue of reviewResult.issues.slice(0, 5)) {
-      console.log(`    [${issue.severity}] ${issue.type}: ${issue.description}`)
+    if (!reviewResult.passed) {
+      const highIssues = reviewResult.issues.filter((i) => i.severity === 'high')
+      const medIssues = reviewResult.issues.filter((i) => i.severity === 'medium')
+      console.log(`  审查: ${highIssues.length} 个严重问题, ${medIssues.length} 个中等问题`)
+      for (const issue of reviewResult.issues.slice(0, 5)) {
+        console.log(`    [${issue.severity}] ${issue.type}: ${issue.description}`)
+      }
+    } else {
+      console.log(`  审查: 通过`)
     }
   } else {
-    console.log(`  审查: 通过`)
+    console.log('  润色/审查: 已跳过（SKIP_POLISH_REVIEW=1）')
   }
 
   // 生成临时摘要（确保后续章节有前文参考）
